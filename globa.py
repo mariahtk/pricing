@@ -79,7 +79,7 @@ def find_closest_comps(user_coords):
         comp_centres.append("")
         comp_distances.append("")
 
-    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str
+    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
@@ -132,7 +132,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           service_charges, property_tax,
                           comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
-                          coworking_names, coworking_distances):
+                          coworking_names, coworking_distances,
+                          coworking_price1, coworking_price2):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -156,11 +157,13 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D20'] = diff1_str
     ws['E20'] = diff2_str
 
-    # Coworking space names & distances, always filled
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
+
+    ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
+    ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -181,13 +184,25 @@ rent_source = st.selectbox("Source of Market Rent",
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
+office_size = st.number_input("2-window office size (in selected area units)", min_value=1.0, value=150.0, format="%.2f")
+
 if st.button("Generate Template"):
     user_coords = get_coords(centre_address)
     if not user_coords:
         st.error("Could not geocode the given address. Please try a different address.")
     else:
-        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
+
+        # Use fixed coworking price per unit area based on area units
+        if area_units == "SqFt":
+            coworking_price_per_unit = 5.0  # $5 per sq ft per month approx
+        else:
+            coworking_price_per_unit = 55.0  # $55 per sq m per month approx
+
+        # Calculate coworking prices for 2-window office
+        coworking_price1 = round(coworking_price_per_unit * office_size, 2)
+        coworking_price2 = round(coworking_price_per_unit * office_size, 2)
 
         if len(coworking_spaces) == 0:
             coworking_names = ["No coworking space found nearby", ""]
@@ -204,8 +219,8 @@ if st.button("Generate Template"):
         st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
 
         st.markdown("### Closest Coworking Spaces")
-        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]})")
-        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]})")
+        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1} {currency}")
+        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2} {currency}")
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
@@ -215,7 +230,8 @@ if st.button("Generate Template"):
             service_charges, property_tax,
             comp_centres, comp_distances,
             quality1, quality2, diff1_str, diff2_str,
-            coworking_names, coworking_distances
+            coworking_names, coworking_distances,
+            coworking_price1, coworking_price2
         )
 
         with open(filled_file, "rb") as f:
