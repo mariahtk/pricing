@@ -84,24 +84,37 @@ def find_closest_comps(user_coords):
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
-    radius = 10000  # 10 km radius
-    query = f"""
-    [out:json];
-    node["office"="coworking"](around:{radius},{lat},{lon});
-    out;
-    """
-    response = requests.get(overpass_url, params={'data': query})
-    data = response.json()
 
+    radius = 10000  # start 10 km
+    max_radius = 30000  # max 30 km
     coworking_spaces = []
-    for element in data.get('elements', []):
-        name = element['tags'].get('name')
-        if name:
-            c_lat = element['lat']
-            c_lon = element['lon']
-            dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
-            coworking_spaces.append((name, dist))
-    coworking_spaces = sorted(coworking_spaces, key=lambda x: x[1])
+
+    while radius <= max_radius and not coworking_spaces:
+        query = f"""
+        [out:json];
+        node["office"="coworking"](around:{radius},{lat},{lon});
+        out;
+        """
+        response = requests.get(overpass_url, params={'data': query})
+        data = response.json()
+
+        coworking_spaces = []
+        for element in data.get('elements', []):
+            name = element['tags'].get('name')
+            if name:
+                c_lat = element['lat']
+                c_lon = element['lon']
+                dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
+                coworking_spaces.append((name, dist))
+        coworking_spaces = sorted(coworking_spaces, key=lambda x: x[1])
+
+        if not coworking_spaces:
+            radius += 5000  # increase radius by 5 km and try again
+
+    # If still empty, add a placeholder so output is never blank
+    if not coworking_spaces:
+        coworking_spaces = [("No coworking space found nearby", 0)]
+
     return coworking_spaces[:2]
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
@@ -134,7 +147,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D20'] = diff1_str
     ws['E20'] = diff2_str
 
-    # --- Coworking spaces name & distance exactly as requested ---
+    # Coworking space names & distances, always filled
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
@@ -167,9 +180,8 @@ if st.button("Generate Template"):
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
 
-        # Prepare coworking output or blanks
         if len(coworking_spaces) == 0:
-            coworking_names = ["", ""]
+            coworking_names = ["No coworking space found nearby", ""]
             coworking_distances = ["", ""]
         elif len(coworking_spaces) == 1:
             coworking_names = [coworking_spaces[0][0], ""]
@@ -178,7 +190,6 @@ if st.button("Generate Template"):
             coworking_names = [coworking_spaces[0][0], coworking_spaces[1][0]]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", f"{coworking_spaces[1][1]} mi"]
 
-        # Show outputs clearly in UI
         st.markdown("### Closest Comps")
         st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
         st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
