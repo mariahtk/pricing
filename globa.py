@@ -131,36 +131,56 @@ def find_online_coworking_osm(user_coords):
 
     return coworking_spaces[:2]
 
-# City-based average coworking rent lookup (USD per sq ft per month)
+# Expanded city/state rent lookup for USD per sqft per month (more U.S. cities + Canadian provinces)
 city_rent_lookup_sqft = {
+    # US cities
     "New York": 70,
     "San Francisco": 65,
-    "Toronto": 50,
-    "Vancouver": 45,
     "Chicago": 40,
     "Los Angeles": 45,
     "Seattle": 50,
     "Boston": 55,
     "Austin": 35,
     "Denver": 30,
+    "Miami": 30,
+    "Washington": 50,
+    "Atlanta": 28,
+    "Dallas": 32,
+    "Houston": 28,
+    # Canadian major cities (converted approx)
+    "Toronto": 50,
+    "Vancouver": 45,
     "Montreal": 35,
     "Calgary": 30,
+    "Ottawa": 32,
+    "Edmonton": 28,
+    "Winnipeg": 25,
+    "Quebec": 25,
 }
 
+# Convert sqft to sqm for Canadian metrics
 city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}  # sqft to sqm
 
 def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
     if location:
         addr = location.raw.get('address', {})
-        city = addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('village')
-        return city
+        # Sometimes city is under different keys
+        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or 
+                addr.get('village') or addr.get('hamlet'))
+        if city:
+            return city
+        # If city not found, fallback to state or province for better matching
+        state = addr.get('state')
+        if state:
+            return state
     return None
 
 def estimate_coworking_price(lat, lon, area_units):
     fixed_office_size = 150  # fixed size for estimate
     city = get_city_from_coords(lat, lon)
     if not city:
+        # Default price per unit if unknown city/province
         price_per_unit = 5 if area_units == "SqFt" else 55
     else:
         if area_units == "SqFt":
@@ -168,7 +188,11 @@ def estimate_coworking_price(lat, lon, area_units):
         else:
             price_per_unit = city_rent_lookup_sqm.get(city, 55)
 
-    return round(price_per_unit * fixed_office_size, 2)
+    estimated_price = price_per_unit * fixed_office_size
+    # Cap the max price at 2000 USD/CAD
+    if estimated_price > 2000:
+        estimated_price = 2000
+    return round(estimated_price, 2)
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
@@ -283,6 +307,7 @@ if st.button("Generate Template"):
             coworking_price1,
             coworking_price2,
         )
+
         with open(filled_file, "rb") as f:
             st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
 
