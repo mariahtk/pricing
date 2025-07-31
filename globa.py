@@ -16,7 +16,6 @@ def clean_columns(df):
 
 usa_data = clean_columns(usa_data)
 canada_data = clean_columns(canada_data)
-
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
 
@@ -26,7 +25,16 @@ def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps, distances, and quality (5 comps avg) ---
+# --- Helper to format percentage difference ---
+def format_diff(value):
+    if value > 0:
+        return f"{abs(value)}% higher"
+    elif value < 0:
+        return f"{abs(value)}% lower"
+    else:
+        return "Same as average"
+
+# --- Find closest comps, quality, and differences ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude', 'Price']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
@@ -39,24 +47,41 @@ def find_closest_comps(user_coords):
     sorted_data = valid_data.sort_values('distance')
     comps5 = sorted_data[['Centre #', 'Latitude', 'Longitude', 'Price', 'distance']].head(5)
 
-    # Closest 2 comps (for output)
+    avg_price = comps5['Price'].mean()
+
+    # --- Comp #1 ---
+    comp1_price = comps5.iloc[0]['Price']
+    if comp1_price > avg_price:
+        quality1 = "Lesser Quality"
+    elif comp1_price < avg_price:
+        quality1 = "Higher Quality"
+    else:
+        quality1 = "Same Quality"
+    diff1 = ((comp1_price - avg_price) / avg_price) * 100
+    diff1_str = format_diff(round(diff1, 2))
+
+    # --- Comp #2 ---
+    if len(comps5) > 1:
+        comp2_price = comps5.iloc[1]['Price']
+        if comp2_price > avg_price:
+            quality2 = "Lesser Quality"
+        elif comp2_price < avg_price:
+            quality2 = "Higher Quality"
+        else:
+            quality2 = "Same Quality"
+        diff2 = ((comp2_price - avg_price) / avg_price) * 100
+        diff2_str = format_diff(round(diff2, 2))
+    else:
+        quality2 = ""
+        diff2_str = ""
+
     comp_centres = comps5['Centre #'].head(2).tolist()
     comp_distances = [f"{d} mi" for d in comps5['distance'].head(2).tolist()]
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append("")
 
-    # --- Quality check (Comp #1 vs average of 5 comps) ---
-    avg_price = comps5['Price'].mean()
-    comp1_price = comps5.iloc[0]['Price']
-    if comp1_price > avg_price:
-        quality = "Lesser Quality"
-    elif comp1_price < avg_price:
-        quality = "Higher Quality"
-    else:
-        quality = "Same Quality"
-
-    return comp_centres, comp_distances, quality
+    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str
 
 # --- Find coworking spaces ---
 def find_online_coworking_osm(user_coords):
@@ -78,12 +103,14 @@ def find_online_coworking_osm(user_coords):
             break
     return coworking_names
 
-# --- Fill Pricing Template 2025.xlsx ---
+# --- Fill Pricing Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
                           service_charges, property_tax,
-                          comp_centres, comp_distances, coworking_names, quality):
+                          comp_centres, comp_distances,
+                          quality1, quality2, diff1_str, diff2_str,
+                          coworking_names):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -92,7 +119,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D5'] = currency
     ws['D6'] = area_units
     ws['D8'] = net_internal_area
-    ws['D9'] = ""  # cleared as requested earlier
+    ws['D9'] = ""  # clear value
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -102,7 +129,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E17'] = comp_centres[1]
     ws['D18'] = comp_distances[0]
     ws['E18'] = comp_distances[1]
-    ws['D19'] = quality  # <-- new logic output
+    ws['D19'] = quality1
+    ws['E19'] = quality2
+    ws['D20'] = diff1_str
+    ws['E20'] = diff2_str
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
@@ -131,12 +161,13 @@ if st.button("Generate Template"):
     if not user_coords:
         st.error("Could not geocode the given address. Please try a different address.")
     else:
-        comp_centres, comp_distances, quality = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
         coworking_names = find_online_coworking_osm(user_coords)
 
         st.write("Closest Comps:", comp_centres)
         st.write("Distances:", comp_distances)
-        st.write("Quality Assessment:", quality)
+        st.write("Quality Assessment Comp#1:", quality1, f"({diff1_str})")
+        st.write("Quality Assessment Comp#2:", quality2, f"({diff2_str})")
         st.write("Closest Coworking Spaces:", coworking_names)
 
         filled_file = fill_pricing_template(
@@ -145,7 +176,9 @@ if st.button("Generate Template"):
             area_units, total_area, net_internal_area,
             monthly_rent, rent_source,
             service_charges, property_tax,
-            comp_centres, comp_distances, coworking_names, quality
+            comp_centres, comp_distances,
+            quality1, quality2, diff1_str, diff2_str,
+            coworking_names
         )
 
         with open(filled_file, "rb") as f:
