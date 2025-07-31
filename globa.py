@@ -40,11 +40,11 @@ def find_closest_comps(user_coords):
     comps = sorted_data[['Centre #', 'Latitude', 'Longitude', 'distance']].head(2)
 
     comp_centres = comps['Centre #'].tolist()
-    comp_distances = comps['distance'].tolist()
+    comp_distances = [f"{d} mi" for d in comps['distance'].tolist()]
 
     while len(comp_centres) < 2:
         comp_centres.append("")
-        comp_distances.append(0.0)
+        comp_distances.append("")
 
     return comp_centres, comp_distances
 
@@ -81,8 +81,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
-    ws['D8'] = net_internal_area
-    ws['D9'] = total_area
+    ws['D8'] = net_internal_area  # Net Internal Area
+    ws['D9'] = ""                 # clear D9
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -90,8 +90,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
     ws['D17'] = comp_centres[0]
     ws['E17'] = comp_centres[1]
-    ws['D18'] = comp_distances[0]
-    ws['E18'] = comp_distances[1]
+    ws['D18'] = comp_distances[0]  # with "mi"
+    ws['E18'] = comp_distances[1]  # with "mi"
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
@@ -124,7 +124,7 @@ if st.button("Generate Template"):
         coworking_names = find_online_coworking_osm(user_coords)
 
         st.write("Closest Comps:", comp_centres)
-        st.write("Distances (miles):", comp_distances)
+        st.write("Distances:", comp_distances)
         st.write("Closest Coworking Spaces:", coworking_names)
 
         filled_file = fill_pricing_template(
