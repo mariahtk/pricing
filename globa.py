@@ -6,10 +6,18 @@ import streamlit as st
 from openpyxl import load_workbook
 import tempfile
 
-# --- Load global pricing data ---
+# --- Load global pricing data and strip whitespace from columns ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
+
+usa_data.columns = usa_data.columns.str.strip()
+canada_data.columns = canada_data.columns.str.strip()
+
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
+all_data.columns = all_data.columns.str.strip()
+
+# Debug: show columns to verify names
+st.write("Columns in all_data:", all_data.columns.tolist())
 
 # --- Geocode user-entered address ---
 geolocator = Nominatim(user_agent="pricing_app")
@@ -19,19 +27,15 @@ def get_coords(address):
 
 # --- Find closest comps with safe lat/lon handling ---
 def find_closest_comps(user_coords):
-    # Drop rows with missing or zero lat/lon
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
 
-    # Calculate distances
     valid_data['distance'] = valid_data.apply(
         lambda row: geodesic(user_coords, (row['Latitude'], row['Longitude'])).miles, axis=1
     )
 
-    # Sort by distance ascending
     sorted_data = valid_data.sort_values('distance')
 
-    # Get top 2 centres or fill with ""
     closest_comps = sorted_data['Centre'].tolist()[:2]
     while len(closest_comps) < 2:
         closest_comps.append("")
