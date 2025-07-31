@@ -51,26 +51,30 @@ def find_closest_comps(user_coords):
 
     # --- Comp #1 ---
     comp1_price = comps5.iloc[0]['Price']
-    if comp1_price < avg_price:   # cheaper → higher quality
+    diff1 = ((comp1_price - avg_price) / avg_price) * 100
+    diff1_rounded = round(diff1, 2)
+    diff1_str = format_diff(diff1_rounded)
+
+    if diff1_rounded > 0:
         quality1 = "Higher Quality"
-    elif comp1_price > avg_price: # more expensive → lesser quality
-        quality1 = "Lesser Quality"
+    elif diff1_rounded < 0:
+        quality1 = "Lower Quality"
     else:
         quality1 = "Same Quality"
-    diff1 = ((comp1_price - avg_price) / avg_price) * 100
-    diff1_str = format_diff(round(diff1, 2))
 
     # --- Comp #2 ---
     if len(comps5) > 1:
         comp2_price = comps5.iloc[1]['Price']
-        if comp2_price < avg_price:
+        diff2 = ((comp2_price - avg_price) / avg_price) * 100
+        diff2_rounded = round(diff2, 2)
+        diff2_str = format_diff(diff2_rounded)
+
+        if diff2_rounded > 0:
             quality2 = "Higher Quality"
-        elif comp2_price > avg_price:
-            quality2 = "Lesser Quality"
+        elif diff2_rounded < 0:
+            quality2 = "Lower Quality"
         else:
             quality2 = "Same Quality"
-        diff2 = ((comp2_price - avg_price) / avg_price) * 100
-        diff2_str = format_diff(round(diff2, 2))
     else:
         quality2 = ""
         diff2_str = ""
