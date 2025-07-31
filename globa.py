@@ -6,18 +6,23 @@ import streamlit as st
 from openpyxl import load_workbook
 import tempfile
 
-# --- Load global pricing data and strip whitespace from columns ---
+# --- Load global pricing data and strip whitespace/newlines from columns ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
 
-usa_data.columns = usa_data.columns.str.strip()
-canada_data.columns = canada_data.columns.str.strip()
+# Strip spaces, newlines, and carriage returns from columns
+def clean_columns(df):
+    df.columns = df.columns.str.strip().str.replace('\n', '').str.replace('\r', '')
+    return df
+
+usa_data = clean_columns(usa_data)
+canada_data = clean_columns(canada_data)
 
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
-all_data.columns = all_data.columns.str.strip()
+all_data = clean_columns(all_data)
 
-# Debug: show columns to verify names
-st.write("Columns in all_data:", all_data.columns.tolist())
+# Debug: Show all_data columns on app start
+st.write("All columns in combined data:", all_data.columns.tolist())
 
 # --- Geocode user-entered address ---
 geolocator = Nominatim(user_agent="pricing_app")
@@ -25,7 +30,7 @@ def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps with safe lat/lon handling ---
+# --- Find closest comps with debug prints ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
@@ -36,7 +41,13 @@ def find_closest_comps(user_coords):
 
     sorted_data = valid_data.sort_values('distance')
 
+    # Debug: print columns and first rows to troubleshoot KeyError
+    st.write("Columns in sorted_data:", sorted_data.columns.tolist())
+    st.write("First few rows of sorted_data:", sorted_data.head())
+
+    # Use the exact column name for centre here (adjust after seeing above output)
     closest_comps = sorted_data['Centre'].tolist()[:2]
+
     while len(closest_comps) < 2:
         closest_comps.append("")
 
