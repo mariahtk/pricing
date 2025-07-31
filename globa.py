@@ -20,16 +20,13 @@ canada_data = clean_columns(canada_data)
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
 
-# Debug: Show all_data columns on app start
-st.write("All columns in combined data:", all_data.columns.tolist())
-
 # --- Geocode user-entered address ---
 geolocator = Nominatim(user_agent="pricing_app")
 def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps ---
+# --- Find closest comps and distances ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
@@ -39,15 +36,17 @@ def find_closest_comps(user_coords):
     )
 
     sorted_data = valid_data.sort_values('distance')
+    comps = sorted_data[['Centre #', 'Latitude', 'Longitude', 'distance']].head(2)
 
-    st.write("Columns in sorted_data:", sorted_data.columns.tolist())
-    st.write("First few rows of sorted_data:", sorted_data.head())
+    comp_centres = comps['Centre #'].tolist()
+    comp_distances = comps['distance'].tolist()
 
-    closest_comps = sorted_data['Centre #'].tolist()[:2]
-    while len(closest_comps) < 2:
-        closest_comps.append("")
+    # Fill empty values if fewer than 2 comps
+    while len(comp_centres) < 2:
+        comp_centres.append("")
+        comp_distances.append(0.0)
 
-    return closest_comps
+    return comp_centres, comp_distances
 
 # --- Find coworking spaces ---
 def find_online_coworking_osm(user_coords):
@@ -74,7 +73,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
                           service_charges, property_tax,
-                          comp_centres, coworking_names):
+                          comp_centres, comp_distances, coworking_names):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -82,15 +81,17 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
-    ws['D8'] = total_area
-    ws['D9'] = net_internal_area
+    ws['D8'] = net_internal_area  # Net Internal Area now in D8
+    ws['D9'] = total_area         # Total Area Contracted now in D9
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
     ws['D13'] = property_tax
 
     ws['D17'] = comp_centres[0]
-    ws['E18'] = comp_centres[1]
+    ws['E17'] = comp_centres[1]
+    ws['D18'] = comp_distances[0]  # Distance to comp #1
+    ws['E18'] = comp_distances[1]  # Distance to comp #2
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
@@ -119,10 +120,11 @@ if st.button("Generate Template"):
     if not user_coords:
         st.error("Could not geocode the given address. Please try a different address.")
     else:
-        comp_centres = find_closest_comps(user_coords)
+        comp_centres, comp_distances = find_closest_comps(user_coords)
         coworking_names = find_online_coworking_osm(user_coords)
 
         st.write("Closest Comps:", comp_centres)
+        st.write("Distances (miles):", comp_distances)
         st.write("Closest Coworking Spaces:", coworking_names)
 
         filled_file = fill_pricing_template(
@@ -131,7 +133,7 @@ if st.button("Generate Template"):
             area_units, total_area, net_internal_area,
             monthly_rent, rent_source,
             service_charges, property_tax,
-            comp_centres, coworking_names
+            comp_centres, comp_distances, coworking_names
         )
 
         with open(filled_file, "rb") as f:
