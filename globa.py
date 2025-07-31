@@ -86,8 +86,8 @@ def find_online_coworking_osm(user_coords):
     overpass_url = "http://overpass-api.de/api/interpreter"
 
     radius = 10000  # start 10 km
-    max_radius = 30000  # max 30 km
-    step = 5000  # 5 km step
+    step = 10000    # increase by 10 km each iteration
+    max_radius = 100000  # 100 km max to avoid infinite loop
     coworking_spaces = []
 
     while radius <= max_radius:
@@ -99,7 +99,6 @@ def find_online_coworking_osm(user_coords):
         response = requests.get(overpass_url, params={'data': query})
         data = response.json()
 
-        # Add new coworking spaces from this radius
         new_spaces = []
         for element in data.get('elements', []):
             name = element['tags'].get('name')
@@ -109,7 +108,7 @@ def find_online_coworking_osm(user_coords):
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist))
 
-        # Combine with existing, remove duplicates by name, keep closest distance
+        # Combine and deduplicate by name keeping closest distance
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist in all_spaces:
@@ -117,17 +116,14 @@ def find_online_coworking_osm(user_coords):
                 unique_spaces[name] = dist
         coworking_spaces = sorted(unique_spaces.items(), key=lambda x: x[1])
 
-        # Stop if found 2 or more coworking spaces
         if len(coworking_spaces) >= 2:
             break
 
         radius += step
 
-    # If none found at all, add placeholder
     if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0)]
 
-    # Return top 2 (or fewer if less found)
     return coworking_spaces[:2]
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
