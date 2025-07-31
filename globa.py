@@ -51,10 +51,10 @@ def find_closest_comps(user_coords):
 
     # --- Comp #1 ---
     comp1_price = comps5.iloc[0]['Price']
-    if comp1_price > avg_price:
-        quality1 = "Lesser Quality"
-    elif comp1_price < avg_price:
+    if comp1_price < avg_price:   # cheaper → higher quality
         quality1 = "Higher Quality"
+    elif comp1_price > avg_price: # more expensive → lesser quality
+        quality1 = "Lesser Quality"
     else:
         quality1 = "Same Quality"
     diff1 = ((comp1_price - avg_price) / avg_price) * 100
@@ -63,10 +63,10 @@ def find_closest_comps(user_coords):
     # --- Comp #2 ---
     if len(comps5) > 1:
         comp2_price = comps5.iloc[1]['Price']
-        if comp2_price > avg_price:
-            quality2 = "Lesser Quality"
-        elif comp2_price < avg_price:
+        if comp2_price < avg_price:
             quality2 = "Higher Quality"
+        elif comp2_price > avg_price:
+            quality2 = "Lesser Quality"
         else:
             quality2 = "Same Quality"
         diff2 = ((comp2_price - avg_price) / avg_price) * 100
