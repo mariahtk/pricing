@@ -10,7 +10,6 @@ import tempfile
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
 
-# Strip spaces, newlines, and carriage returns from columns
 def clean_columns(df):
     df.columns = df.columns.str.strip().str.replace('\n', '').str.replace('\r', '')
     return df
@@ -45,8 +44,7 @@ def find_closest_comps(user_coords):
     st.write("Columns in sorted_data:", sorted_data.columns.tolist())
     st.write("First few rows of sorted_data:", sorted_data.head())
 
-    # Use the exact column name for centre here (adjust after seeing above output)
-    closest_comps = sorted_data['Centre'].tolist()[:2]
+    closest_comps = sorted_data['Centre #'].tolist()[:2]
 
     while len(closest_comps) < 2:
         closest_comps.append("")
