@@ -26,13 +26,14 @@ def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps and distances ---
+# --- Find closest comps and distances (rounded to 2 decimals, miles) ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
 
     valid_data['distance'] = valid_data.apply(
-        lambda row: geodesic(user_coords, (row['Latitude'], row['Longitude'])).miles, axis=1
+        lambda row: round(geodesic(user_coords, (row['Latitude'], row['Longitude'])).miles, 2),
+        axis=1
     )
 
     sorted_data = valid_data.sort_values('distance')
@@ -41,7 +42,6 @@ def find_closest_comps(user_coords):
     comp_centres = comps['Centre #'].tolist()
     comp_distances = comps['distance'].tolist()
 
-    # Fill empty values if fewer than 2 comps
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append(0.0)
@@ -81,8 +81,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
-    ws['D8'] = net_internal_area  # Net Internal Area now in D8
-    ws['D9'] = total_area         # Total Area Contracted now in D9
+    ws['D8'] = net_internal_area
+    ws['D9'] = total_area
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -90,8 +90,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
     ws['D17'] = comp_centres[0]
     ws['E17'] = comp_centres[1]
-    ws['D18'] = comp_distances[0]  # Distance to comp #1
-    ws['E18'] = comp_distances[1]  # Distance to comp #2
+    ws['D18'] = comp_distances[0]
+    ws['E18'] = comp_distances[1]
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
