@@ -132,7 +132,6 @@ def find_online_coworking_osm(user_coords):
     return coworking_spaces[:2]
 
 # City-based average coworking rent lookup (USD per sq ft per month)
-# Add or modify this lookup with more cities as needed
 city_rent_lookup_sqft = {
     "New York": 70,
     "San Francisco": 65,
@@ -148,7 +147,7 @@ city_rent_lookup_sqft = {
     "Calgary": 30,
 }
 
-city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}  # convert sqft to sqm approx
+city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}  # sqft to sqm
 
 def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
@@ -158,10 +157,10 @@ def get_city_from_coords(lat, lon):
         return city
     return None
 
-def estimate_coworking_price(lat, lon, office_size, area_units):
+def estimate_coworking_price(lat, lon, area_units):
+    fixed_office_size = 150  # fixed size for estimate
     city = get_city_from_coords(lat, lon)
     if not city:
-        # fallback averages
         price_per_unit = 5 if area_units == "SqFt" else 55
     else:
         if area_units == "SqFt":
@@ -169,7 +168,7 @@ def estimate_coworking_price(lat, lon, office_size, area_units):
         else:
             price_per_unit = city_rent_lookup_sqm.get(city, 55)
 
-    return round(price_per_unit * office_size, 2)
+    return round(price_per_unit * fixed_office_size, 2)
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
@@ -229,8 +228,6 @@ rent_source = st.selectbox("Source of Market Rent",
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
-office_size = st.number_input("2-window office size (in selected area units)", min_value=1.0, value=150.0, format="%.2f")
-
 if st.button("Generate Template"):
     user_coords = get_coords(centre_address)
     if not user_coords:
@@ -239,7 +236,6 @@ if st.button("Generate Template"):
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
 
-        # Estimate coworking prices based on city & office size
         if len(coworking_spaces) == 0:
             coworking_names = ["No coworking space found nearby", ""]
             coworking_distances = ["", ""]
@@ -248,13 +244,13 @@ if st.button("Generate Template"):
         elif len(coworking_spaces) == 1:
             coworking_names = [coworking_spaces[0][0], ""]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", ""]
-            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], office_size, area_units)
+            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units)
             coworking_price2 = None
         else:
             coworking_names = [coworking_spaces[0][0], coworking_spaces[1][0]]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", f"{coworking_spaces[1][1]} mi"]
-            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], office_size, area_units)
-            coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], office_size, area_units)
+            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units)
+            coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
         st.markdown("### Closest Comps")
         st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
@@ -266,20 +262,27 @@ if st.button("Generate Template"):
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
-            centre_num, centre_address, currency,
-            area_units, total_area, net_internal_area,
-            monthly_rent, rent_source,
-            service_charges, property_tax,
-            comp_centres, comp_distances,
-            quality1, quality2, diff1_str, diff2_str,
-            coworking_names, coworking_distances,
-            coworking_price1, coworking_price2
+            centre_num,
+            centre_address,
+            currency,
+            area_units,
+            total_area,
+            net_internal_area,
+            monthly_rent,
+            rent_source,
+            service_charges,
+            property_tax,
+            comp_centres,
+            comp_distances,
+            quality1,
+            quality2,
+            diff1_str,
+            diff2_str,
+            coworking_names,
+            coworking_distances,
+            coworking_price1,
+            coworking_price2,
         )
-
         with open(filled_file, "rb") as f:
-            st.download_button(
-                label="Download Filled Pricing Template",
-                data=f,
-                file_name="Pricing_Template_2025_filled.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
+
