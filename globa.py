@@ -87,9 +87,10 @@ def find_online_coworking_osm(user_coords):
 
     radius = 10000  # start 10 km
     max_radius = 30000  # max 30 km
+    step = 5000  # 5 km step
     coworking_spaces = []
 
-    while radius <= max_radius and not coworking_spaces:
+    while radius <= max_radius:
         query = f"""
         [out:json];
         node["office"="coworking"](around:{radius},{lat},{lon});
@@ -98,23 +99,35 @@ def find_online_coworking_osm(user_coords):
         response = requests.get(overpass_url, params={'data': query})
         data = response.json()
 
-        coworking_spaces = []
+        # Add new coworking spaces from this radius
+        new_spaces = []
         for element in data.get('elements', []):
             name = element['tags'].get('name')
             if name:
                 c_lat = element['lat']
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
-                coworking_spaces.append((name, dist))
-        coworking_spaces = sorted(coworking_spaces, key=lambda x: x[1])
+                new_spaces.append((name, dist))
 
-        if not coworking_spaces:
-            radius += 5000  # increase radius by 5 km and try again
+        # Combine with existing, remove duplicates by name, keep closest distance
+        all_spaces = coworking_spaces + new_spaces
+        unique_spaces = {}
+        for name, dist in all_spaces:
+            if name not in unique_spaces or dist < unique_spaces[name]:
+                unique_spaces[name] = dist
+        coworking_spaces = sorted(unique_spaces.items(), key=lambda x: x[1])
 
-    # If still empty, add a placeholder so output is never blank
-    if not coworking_spaces:
+        # Stop if found 2 or more coworking spaces
+        if len(coworking_spaces) >= 2:
+            break
+
+        radius += step
+
+    # If none found at all, add placeholder
+    if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0)]
 
+    # Return top 2 (or fewer if less found)
     return coworking_spaces[:2]
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
