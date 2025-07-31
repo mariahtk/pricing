@@ -165,12 +165,10 @@ def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
     if location:
         addr = location.raw.get('address', {})
-        # Sometimes city is under different keys
         city = (addr.get('city') or addr.get('town') or addr.get('municipality') or 
                 addr.get('village') or addr.get('hamlet'))
         if city:
             return city
-        # If city not found, fallback to state or province for better matching
         state = addr.get('state')
         if state:
             return state
@@ -180,7 +178,6 @@ def estimate_coworking_price(lat, lon, area_units):
     fixed_office_size = 150  # fixed size for estimate
     city = get_city_from_coords(lat, lon)
     if not city:
-        # Default price per unit if unknown city/province
         price_per_unit = 5 if area_units == "SqFt" else 55
     else:
         if area_units == "SqFt":
@@ -189,7 +186,6 @@ def estimate_coworking_price(lat, lon, area_units):
             price_per_unit = city_rent_lookup_sqm.get(city, 55)
 
     estimated_price = price_per_unit * fixed_office_size
-    # Cap the max price at 2000 USD/CAD
     if estimated_price > 2000:
         estimated_price = 2000
     return round(estimated_price, 2)
@@ -201,7 +197,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
                           coworking_names, coworking_distances,
-                          coworking_price1, coworking_price2):
+                          coworking_price1, coworking_price2,
+                          total_cash_flow):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -233,6 +230,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
     ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
 
+    ws['D35'] = total_cash_flow
+
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
     return tmp_file.name
@@ -251,6 +250,8 @@ rent_source = st.selectbox("Source of Market Rent",
                            ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
+
+total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
 
 if st.button("Generate Template"):
     user_coords = get_coords(centre_address)
@@ -306,8 +307,8 @@ if st.button("Generate Template"):
             coworking_distances,
             coworking_price1,
             coworking_price2,
+            total_cash_flow,
         )
 
         with open(filled_file, "rb") as f:
             st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
-
