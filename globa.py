@@ -6,7 +6,7 @@ import streamlit as st
 from openpyxl import load_workbook
 import tempfile
 
-# --- Load global pricing data and strip whitespace/newlines from columns ---
+# --- Load global pricing data and clean columns ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
 
@@ -29,7 +29,7 @@ def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps with debug prints ---
+# --- Find closest comps ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
@@ -40,18 +40,16 @@ def find_closest_comps(user_coords):
 
     sorted_data = valid_data.sort_values('distance')
 
-    # Debug: print columns and first rows to troubleshoot KeyError
     st.write("Columns in sorted_data:", sorted_data.columns.tolist())
     st.write("First few rows of sorted_data:", sorted_data.head())
 
     closest_comps = sorted_data['Centre #'].tolist()[:2]
-
     while len(closest_comps) < 2:
         closest_comps.append("")
 
     return closest_comps
 
-# --- Find coworking spaces using Overpass API ---
+# --- Find coworking spaces ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
@@ -72,15 +70,24 @@ def find_online_coworking_osm(user_coords):
     return coworking_names
 
 # --- Fill Pricing Template 2025.xlsx ---
-def fill_pricing_template(template_path, centre_name, centre_address, currency, area_units,
+def fill_pricing_template(template_path, centre_num, centre_address, currency,
+                          area_units, total_area, net_internal_area,
+                          monthly_rent, rent_source,
+                          service_charges, property_tax,
                           comp_centres, coworking_names):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
-    ws['C2'] = centre_name
+    ws['C2'] = centre_num
     ws['C3'] = centre_address
     ws['D5'] = currency
-    ws['D7'] = area_units
+    ws['D6'] = area_units
+    ws['D8'] = total_area
+    ws['D9'] = net_internal_area
+    ws['D10'] = monthly_rent
+    ws['D11'] = rent_source
+    ws['D12'] = service_charges
+    ws['D13'] = property_tax
 
     ws['D17'] = comp_centres[0]
     ws['E18'] = comp_centres[1]
@@ -95,10 +102,17 @@ def fill_pricing_template(template_path, centre_name, centre_address, currency, 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
 
-centre_name = st.text_input("Centre Name")
+centre_num = st.text_input("Centre #")
 centre_address = st.text_input("Centre Address")
 currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
-area_units = st.selectbox("Area Units", ["SqM", "Sqft"])
+area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
+total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
+net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
+monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
+rent_source = st.selectbox("Source of Market Rent", 
+                           ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
+service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
+property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
 if st.button("Generate Template"):
     user_coords = get_coords(centre_address)
@@ -111,10 +125,14 @@ if st.button("Generate Template"):
         st.write("Closest Comps:", comp_centres)
         st.write("Closest Coworking Spaces:", coworking_names)
 
-        filled_file = fill_pricing_template("Pricing Template 2025.xlsx",
-                                            centre_name, centre_address,
-                                            currency, area_units,
-                                            comp_centres, coworking_names)
+        filled_file = fill_pricing_template(
+            "Pricing Template 2025.xlsx",
+            centre_num, centre_address, currency,
+            area_units, total_area, net_internal_area,
+            monthly_rent, rent_source,
+            service_charges, property_tax,
+            comp_centres, coworking_names
+        )
 
         with open(filled_file, "rb") as f:
             st.download_button(
