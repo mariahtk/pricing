@@ -51,30 +51,26 @@ def find_closest_comps(user_coords):
 
     # --- Comp #1 ---
     comp1_price = comps5.iloc[0]['Price']
-    diff1 = ((comp1_price - avg_price) / avg_price) * 100
-    diff1_rounded = round(diff1, 2)
-    diff1_str = format_diff(diff1_rounded)
-
-    if diff1_rounded > 0:
+    if comp1_price < avg_price:   # cheaper → higher quality
         quality1 = "Higher Quality"
-    elif diff1_rounded < 0:
-        quality1 = "Lower Quality"
+    elif comp1_price > avg_price: # more expensive → lesser quality
+        quality1 = "Lesser Quality"
     else:
         quality1 = "Same Quality"
+    diff1 = ((comp1_price - avg_price) / avg_price) * 100
+    diff1_str = format_diff(round(diff1, 2))
 
     # --- Comp #2 ---
     if len(comps5) > 1:
         comp2_price = comps5.iloc[1]['Price']
-        diff2 = ((comp2_price - avg_price) / avg_price) * 100
-        diff2_rounded = round(diff2, 2)
-        diff2_str = format_diff(diff2_rounded)
-
-        if diff2_rounded > 0:
+        if comp2_price < avg_price:
             quality2 = "Higher Quality"
-        elif diff2_rounded < 0:
-            quality2 = "Lower Quality"
+        elif comp2_price > avg_price:
+            quality2 = "Lesser Quality"
         else:
             quality2 = "Same Quality"
+        diff2 = ((comp2_price - avg_price) / avg_price) * 100
+        diff2_str = format_diff(round(diff2, 2))
     else:
         quality2 = ""
         diff2_str = ""
@@ -87,25 +83,32 @@ def find_closest_comps(user_coords):
 
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str
 
-# --- Find coworking spaces ---
+# --- Find coworking spaces with increased radius ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
+    radius = 10000  # 10 km radius
     query = f"""
     [out:json];
-    node["office"="coworking"](around:5000,{lat},{lon});
+    node["office"="coworking"](around:{radius},{lat},{lon});
     out;
     """
     response = requests.get(overpass_url, params={'data': query})
     data = response.json()
-    coworking_names = []
+
+    coworking_spaces = []
     for element in data.get('elements', []):
         name = element['tags'].get('name')
         if name:
-            coworking_names.append(name)
-        if len(coworking_names) == 2:
-            break
-    return coworking_names
+            c_lat = element['lat']
+            c_lon = element['lon']
+            dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
+            coworking_spaces.append((name, dist))
+    # Sort by distance ascending
+    coworking_spaces = sorted(coworking_spaces, key=lambda x: x[1])
+
+    # Take top 2 closest
+    return coworking_spaces[:2]
 
 # --- Fill Pricing Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
@@ -114,7 +117,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           service_charges, property_tax,
                           comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
-                          coworking_names):
+                          coworking_names, coworking_distances):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -140,6 +143,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
+    ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
+    ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -166,13 +171,24 @@ if st.button("Generate Template"):
         st.error("Could not geocode the given address. Please try a different address.")
     else:
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
-        coworking_names = find_online_coworking_osm(user_coords)
+        coworking_spaces = find_online_coworking_osm(user_coords)
+
+        if len(coworking_spaces) == 0:
+            coworking_names = ["", ""]
+            coworking_distances = ["", ""]
+        elif len(coworking_spaces) == 1:
+            coworking_names = [coworking_spaces[0][0], ""]
+            coworking_distances = [f"{coworking_spaces[0][1]} mi", ""]
+        else:
+            coworking_names = [coworking_spaces[0][0], coworking_spaces[1][0]]
+            coworking_distances = [f"{coworking_spaces[0][1]} mi", f"{coworking_spaces[1][1]} mi"]
 
         st.write("Closest Comps:", comp_centres)
         st.write("Distances:", comp_distances)
         st.write("Quality Assessment Comp#1:", quality1, f"({diff1_str})")
         st.write("Quality Assessment Comp#2:", quality2, f"({diff2_str})")
         st.write("Closest Coworking Spaces:", coworking_names)
+        st.write("Coworking Distances:", coworking_distances)
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
@@ -182,7 +198,7 @@ if st.button("Generate Template"):
             service_charges, property_tax,
             comp_centres, comp_distances,
             quality1, quality2, diff1_str, diff2_str,
-            coworking_names
+            coworking_names, coworking_distances
         )
 
         with open(filled_file, "rb") as f:
