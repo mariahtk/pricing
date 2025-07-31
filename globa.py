@@ -19,8 +19,9 @@ canada_data = clean_columns(canada_data)
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
 
-# --- Geocode ---
+# --- Geolocator ---
 geolocator = Nominatim(user_agent="pricing_app")
+
 def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
@@ -106,15 +107,19 @@ def find_online_coworking_osm(user_coords):
                 c_lat = element['lat']
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
-                new_spaces.append((name, dist))
+                new_spaces.append((name, dist, c_lat, c_lon))
 
         # Combine and deduplicate by name keeping closest distance
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
-        for name, dist in all_spaces:
-            if name not in unique_spaces or dist < unique_spaces[name]:
-                unique_spaces[name] = dist
-        coworking_spaces = sorted(unique_spaces.items(), key=lambda x: x[1])
+        for name, dist, c_lat, c_lon in all_spaces:
+            if name not in unique_spaces or dist < unique_spaces[name][0]:
+                unique_spaces[name] = (dist, c_lat, c_lon)
+        # Sort by distance
+        coworking_spaces = sorted(
+            [(name, val[0], val[1], val[2]) for name, val in unique_spaces.items()],
+            key=lambda x: x[1]
+        )
 
         if len(coworking_spaces) >= 2:
             break
@@ -122,9 +127,49 @@ def find_online_coworking_osm(user_coords):
         radius += step
 
     if len(coworking_spaces) == 0:
-        coworking_spaces = [("No coworking space found nearby", 0)]
+        coworking_spaces = [("No coworking space found nearby", 0, None, None)]
 
     return coworking_spaces[:2]
+
+# City-based average coworking rent lookup (USD per sq ft per month)
+# Add or modify this lookup with more cities as needed
+city_rent_lookup_sqft = {
+    "New York": 70,
+    "San Francisco": 65,
+    "Toronto": 50,
+    "Vancouver": 45,
+    "Chicago": 40,
+    "Los Angeles": 45,
+    "Seattle": 50,
+    "Boston": 55,
+    "Austin": 35,
+    "Denver": 30,
+    "Montreal": 35,
+    "Calgary": 30,
+}
+
+city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}  # convert sqft to sqm approx
+
+def get_city_from_coords(lat, lon):
+    location = geolocator.reverse((lat, lon), exactly_one=True)
+    if location:
+        addr = location.raw.get('address', {})
+        city = addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('village')
+        return city
+    return None
+
+def estimate_coworking_price(lat, lon, office_size, area_units):
+    city = get_city_from_coords(lat, lon)
+    if not city:
+        # fallback averages
+        price_per_unit = 5 if area_units == "SqFt" else 55
+    else:
+        if area_units == "SqFt":
+            price_per_unit = city_rent_lookup_sqft.get(city, 5)
+        else:
+            price_per_unit = city_rent_lookup_sqm.get(city, 55)
+
+    return round(price_per_unit * office_size, 2)
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
@@ -194,33 +239,30 @@ if st.button("Generate Template"):
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
 
-        # Use fixed coworking price per unit area based on area units
-        if area_units == "SqFt":
-            coworking_price_per_unit = 5.0  # $5 per sq ft per month approx
-        else:
-            coworking_price_per_unit = 55.0  # $55 per sq m per month approx
-
-        # Calculate coworking prices for 2-window office
-        coworking_price1 = round(coworking_price_per_unit * office_size, 2)
-        coworking_price2 = round(coworking_price_per_unit * office_size, 2)
-
+        # Estimate coworking prices based on city & office size
         if len(coworking_spaces) == 0:
             coworking_names = ["No coworking space found nearby", ""]
             coworking_distances = ["", ""]
+            coworking_price1 = None
+            coworking_price2 = None
         elif len(coworking_spaces) == 1:
             coworking_names = [coworking_spaces[0][0], ""]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", ""]
+            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], office_size, area_units)
+            coworking_price2 = None
         else:
             coworking_names = [coworking_spaces[0][0], coworking_spaces[1][0]]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", f"{coworking_spaces[1][1]} mi"]
+            coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], office_size, area_units)
+            coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], office_size, area_units)
 
         st.markdown("### Closest Comps")
         st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
         st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
 
         st.markdown("### Closest Coworking Spaces")
-        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1} {currency}")
-        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2} {currency}")
+        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1 if coworking_price1 is not None else 'N/A'} {currency}")
+        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2 if coworking_price2 is not None else 'N/A'} {currency}")
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
