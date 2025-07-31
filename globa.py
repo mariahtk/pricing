@@ -6,7 +6,7 @@ import streamlit as st
 from openpyxl import load_workbook
 import tempfile
 
-# --- Load global pricing data and clean columns ---
+# --- Load global pricing data ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
 
@@ -19,13 +19,12 @@ canada_data = clean_columns(canada_data)
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
 
-# --- Geocode user-entered address ---
+# --- Geocode ---
 geolocator = Nominatim(user_agent="pricing_app")
 def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Helper to format percentage difference ---
 def format_diff(value):
     if value > 0:
         return f"{abs(value)}% higher"
@@ -34,7 +33,6 @@ def format_diff(value):
     else:
         return "Same as average"
 
-# --- Find closest comps, quality, and differences ---
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude', 'Price']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
@@ -49,23 +47,23 @@ def find_closest_comps(user_coords):
 
     avg_price = comps5['Price'].mean()
 
-    # --- Comp #1 ---
+    # Comp #1
     comp1_price = comps5.iloc[0]['Price']
-    if comp1_price < avg_price:   # cheaper → higher quality
+    if comp1_price > avg_price:
         quality1 = "Higher Quality"
-    elif comp1_price > avg_price: # more expensive → lesser quality
+    elif comp1_price < avg_price:
         quality1 = "Lesser Quality"
     else:
         quality1 = "Same Quality"
     diff1 = ((comp1_price - avg_price) / avg_price) * 100
     diff1_str = format_diff(round(diff1, 2))
 
-    # --- Comp #2 ---
+    # Comp #2
     if len(comps5) > 1:
         comp2_price = comps5.iloc[1]['Price']
-        if comp2_price < avg_price:
+        if comp2_price > avg_price:
             quality2 = "Higher Quality"
-        elif comp2_price > avg_price:
+        elif comp2_price < avg_price:
             quality2 = "Lesser Quality"
         else:
             quality2 = "Same Quality"
@@ -83,7 +81,6 @@ def find_closest_comps(user_coords):
 
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str
 
-# --- Find coworking spaces with increased radius ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
@@ -104,13 +101,9 @@ def find_online_coworking_osm(user_coords):
             c_lon = element['lon']
             dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
             coworking_spaces.append((name, dist))
-    # Sort by distance ascending
     coworking_spaces = sorted(coworking_spaces, key=lambda x: x[1])
-
-    # Take top 2 closest
     return coworking_spaces[:2]
 
-# --- Fill Pricing Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
@@ -126,7 +119,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D5'] = currency
     ws['D6'] = area_units
     ws['D8'] = net_internal_area
-    ws['D9'] = ""  # clear value
+    ws['D9'] = ""  # clear D9 as requested
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -141,6 +134,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D20'] = diff1_str
     ws['E20'] = diff2_str
 
+    # --- Coworking spaces name & distance exactly as requested ---
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
@@ -173,6 +167,7 @@ if st.button("Generate Template"):
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
 
+        # Prepare coworking output or blanks
         if len(coworking_spaces) == 0:
             coworking_names = ["", ""]
             coworking_distances = ["", ""]
@@ -183,12 +178,14 @@ if st.button("Generate Template"):
             coworking_names = [coworking_spaces[0][0], coworking_spaces[1][0]]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", f"{coworking_spaces[1][1]} mi"]
 
-        st.write("Closest Comps:", comp_centres)
-        st.write("Distances:", comp_distances)
-        st.write("Quality Assessment Comp#1:", quality1, f"({diff1_str})")
-        st.write("Quality Assessment Comp#2:", quality2, f"({diff2_str})")
-        st.write("Closest Coworking Spaces:", coworking_names)
-        st.write("Coworking Distances:", coworking_distances)
+        # Show outputs clearly in UI
+        st.markdown("### Closest Comps")
+        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
+        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
+
+        st.markdown("### Closest Coworking Spaces")
+        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]})")
+        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]})")
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
