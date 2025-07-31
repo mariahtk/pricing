@@ -26,9 +26,9 @@ def get_coords(address):
     location = geolocator.geocode(address)
     return (location.latitude, location.longitude) if location else None
 
-# --- Find closest comps and distances (rounded to 2 decimals, miles) ---
+# --- Find closest comps, distances, and quality (5 comps avg) ---
 def find_closest_comps(user_coords):
-    valid_data = all_data.dropna(subset=['Latitude', 'Longitude']).copy()
+    valid_data = all_data.dropna(subset=['Latitude', 'Longitude', 'Price']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
 
     valid_data['distance'] = valid_data.apply(
@@ -37,16 +37,26 @@ def find_closest_comps(user_coords):
     )
 
     sorted_data = valid_data.sort_values('distance')
-    comps = sorted_data[['Centre #', 'Latitude', 'Longitude', 'distance']].head(2)
+    comps5 = sorted_data[['Centre #', 'Latitude', 'Longitude', 'Price', 'distance']].head(5)
 
-    comp_centres = comps['Centre #'].tolist()
-    comp_distances = [f"{d} mi" for d in comps['distance'].tolist()]
-
+    # Closest 2 comps (for output)
+    comp_centres = comps5['Centre #'].head(2).tolist()
+    comp_distances = [f"{d} mi" for d in comps5['distance'].head(2).tolist()]
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append("")
 
-    return comp_centres, comp_distances
+    # --- Quality check (Comp #1 vs average of 5 comps) ---
+    avg_price = comps5['Price'].mean()
+    comp1_price = comps5.iloc[0]['Price']
+    if comp1_price > avg_price:
+        quality = "Lesser Quality"
+    elif comp1_price < avg_price:
+        quality = "Higher Quality"
+    else:
+        quality = "Same Quality"
+
+    return comp_centres, comp_distances, quality
 
 # --- Find coworking spaces ---
 def find_online_coworking_osm(user_coords):
@@ -73,7 +83,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
                           service_charges, property_tax,
-                          comp_centres, comp_distances, coworking_names):
+                          comp_centres, comp_distances, coworking_names, quality):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -81,8 +91,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
-    ws['D8'] = net_internal_area  # Net Internal Area
-    ws['D9'] = ""                 # clear D9
+    ws['D8'] = net_internal_area
+    ws['D9'] = ""  # cleared as requested earlier
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -90,8 +100,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
     ws['D17'] = comp_centres[0]
     ws['E17'] = comp_centres[1]
-    ws['D18'] = comp_distances[0]  # with "mi"
-    ws['E18'] = comp_distances[1]  # with "mi"
+    ws['D18'] = comp_distances[0]
+    ws['E18'] = comp_distances[1]
+    ws['D19'] = quality  # <-- new logic output
 
     ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
@@ -120,11 +131,12 @@ if st.button("Generate Template"):
     if not user_coords:
         st.error("Could not geocode the given address. Please try a different address.")
     else:
-        comp_centres, comp_distances = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality = find_closest_comps(user_coords)
         coworking_names = find_online_coworking_osm(user_coords)
 
         st.write("Closest Comps:", comp_centres)
         st.write("Distances:", comp_distances)
+        st.write("Quality Assessment:", quality)
         st.write("Closest Coworking Spaces:", coworking_names)
 
         filled_file = fill_pricing_template(
@@ -133,7 +145,7 @@ if st.button("Generate Template"):
             area_units, total_area, net_internal_area,
             monthly_rent, rent_source,
             service_charges, property_tax,
-            comp_centres, comp_distances, coworking_names
+            comp_centres, comp_distances, coworking_names, quality
         )
 
         with open(filled_file, "rb") as f:
