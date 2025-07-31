@@ -6,6 +6,16 @@ import streamlit as st
 from openpyxl import load_workbook
 import tempfile
 
+# --- Hide Streamlit Branding and Toolbar ---
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}     /* Hide hamburger menu */
+    footer {visibility: hidden;}       /* Hide footer (Made with Streamlit) */
+    header {visibility: hidden;}       /* Hide top header (share, edit, github) */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # --- Load global pricing data ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
@@ -131,35 +141,14 @@ def find_online_coworking_osm(user_coords):
 
     return coworking_spaces[:2]
 
-# Expanded city/state rent lookup for USD per sqft per month (more U.S. cities + Canadian provinces)
 city_rent_lookup_sqft = {
-    # US cities
-    "New York": 70,
-    "San Francisco": 65,
-    "Chicago": 40,
-    "Los Angeles": 45,
-    "Seattle": 50,
-    "Boston": 55,
-    "Austin": 35,
-    "Denver": 30,
-    "Miami": 30,
-    "Washington": 50,
-    "Atlanta": 28,
-    "Dallas": 32,
-    "Houston": 28,
-    # Canadian major cities (converted approx)
-    "Toronto": 50,
-    "Vancouver": 45,
-    "Montreal": 35,
-    "Calgary": 30,
-    "Ottawa": 32,
-    "Edmonton": 28,
-    "Winnipeg": 25,
-    "Quebec": 25,
+    "New York": 70, "San Francisco": 65, "Chicago": 40, "Los Angeles": 45,
+    "Seattle": 50, "Boston": 55, "Austin": 35, "Denver": 30, "Miami": 30,
+    "Washington": 50, "Atlanta": 28, "Dallas": 32, "Houston": 28,
+    "Toronto": 50, "Vancouver": 45, "Montreal": 35, "Calgary": 30,
+    "Ottawa": 32, "Edmonton": 28, "Winnipeg": 25, "Quebec": 25,
 }
-
-# Convert sqft to sqm for Canadian metrics
-city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}  # sqft to sqm
+city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}
 
 def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
