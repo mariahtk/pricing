@@ -87,9 +87,9 @@ def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
 
-    radius = 10000  # start 10 km
-    step = 10000    # increase by 10 km each iteration
-    max_radius = 100000  # 100 km max to avoid infinite loop
+    radius = 10000
+    step = 10000
+    max_radius = 100000
     coworking_spaces = []
 
     while radius <= max_radius:
@@ -110,7 +110,6 @@ def find_online_coworking_osm(user_coords):
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
 
-        # Combine and deduplicate by name keeping closest distance
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
@@ -161,6 +160,13 @@ def estimate_coworking_price(lat, lon, area_units):
     estimated_price = price_per_unit * fixed_office_size
     return round(min(estimated_price, 2000), 2)
 
+# --- Safe numeric conversion ---
+def safe_to_float(val):
+    try:
+        return float(val.replace(",", "")) if val and val != "." else 0
+    except:
+        return 0
+
 # --- Financial Model Extraction ---
 def extract_from_excel(uploaded_file):
     try:
@@ -169,10 +175,7 @@ def extract_from_excel(uploaded_file):
         text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
 
-        gross_area = None
-        market_rent = None
-        cashflow = None
-
+        gross_area = market_rent = cashflow = None
         for row in ws.iter_rows(values_only=True):
             row_text = [str(x).strip().lower() if x else "" for x in row]
             if "gross area (sqft)" in " ".join(row_text):
@@ -196,13 +199,14 @@ def extract_from_pdf(uploaded_file):
             for page in pdf.pages:
                 text += page.extract_text() + "\n"
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+
         area_match = re.search(r"Gross Area \(sqft\).*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
         rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
         cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
 
-        gross_area = float(area_match.group(1).replace(",", "")) if area_match else 0
-        market_rent = float(rent_match.group(1).replace(",", "")) if rent_match else 0
-        cashflow = float(cashflow_match.group(1).replace(",", "")) if cashflow_match else 0
+        gross_area = safe_to_float(area_match.group(1)) if area_match else 0
+        market_rent = safe_to_float(rent_match.group(1)) if rent_match else 0
+        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
 
         net_internal_area = gross_area * 0.5
         monthly_cashflow = cashflow / 12
