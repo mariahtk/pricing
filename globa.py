@@ -5,6 +5,8 @@ from geopy.distance import geodesic
 import streamlit as st
 from openpyxl import load_workbook
 import tempfile
+import pdfplumber
+import re
 
 # --- Hide Streamlit Branding and Toolbar ---
 hide_streamlit_style = """
@@ -55,29 +57,18 @@ def find_closest_comps(user_coords):
 
     sorted_data = valid_data.sort_values('distance')
     comps5 = sorted_data[['Centre #', 'Latitude', 'Longitude', 'Price', 'distance']].head(5)
-
     avg_price = comps5['Price'].mean()
 
     # Comp #1
     comp1_price = comps5.iloc[0]['Price']
-    if comp1_price > avg_price:
-        quality1 = "Higher Quality"
-    elif comp1_price < avg_price:
-        quality1 = "Lesser Quality"
-    else:
-        quality1 = "Same Quality"
+    quality1 = "Higher Quality" if comp1_price > avg_price else "Lesser Quality" if comp1_price < avg_price else "Same Quality"
     diff1 = ((comp1_price - avg_price) / avg_price) * 100
     diff1_str = format_diff(round(diff1, 2))
 
     # Comp #2
     if len(comps5) > 1:
         comp2_price = comps5.iloc[1]['Price']
-        if comp2_price > avg_price:
-            quality2 = "Higher Quality"
-        elif comp2_price < avg_price:
-            quality2 = "Lesser Quality"
-        else:
-            quality2 = "Same Quality"
+        quality2 = "Higher Quality" if comp2_price > avg_price else "Lesser Quality" if comp2_price < avg_price else "Same Quality"
         diff2 = ((comp2_price - avg_price) / avg_price) * 100
         diff2_str = format_diff(round(diff2, 2))
     else:
@@ -125,7 +116,6 @@ def find_online_coworking_osm(user_coords):
         for name, dist, c_lat, c_lon in all_spaces:
             if name not in unique_spaces or dist < unique_spaces[name][0]:
                 unique_spaces[name] = (dist, c_lat, c_lon)
-        # Sort by distance
         coworking_spaces = sorted(
             [(name, val[0], val[1], val[2]) for name, val in unique_spaces.items()],
             key=lambda x: x[1]
@@ -133,12 +123,10 @@ def find_online_coworking_osm(user_coords):
 
         if len(coworking_spaces) >= 2:
             break
-
         radius += step
 
     if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0, None, None)]
-
     return coworking_spaces[:2]
 
 city_rent_lookup_sqft = {
@@ -164,21 +152,66 @@ def get_city_from_coords(lat, lon):
     return None
 
 def estimate_coworking_price(lat, lon, area_units):
-    fixed_office_size = 150  # fixed size for estimate
+    fixed_office_size = 150
     city = get_city_from_coords(lat, lon)
     if not city:
         price_per_unit = 5 if area_units == "SqFt" else 55
     else:
-        if area_units == "SqFt":
-            price_per_unit = city_rent_lookup_sqft.get(city, 5)
-        else:
-            price_per_unit = city_rent_lookup_sqm.get(city, 55)
-
+        price_per_unit = city_rent_lookup_sqft.get(city, 5) if area_units == "SqFt" else city_rent_lookup_sqm.get(city, 55)
     estimated_price = price_per_unit * fixed_office_size
-    if estimated_price > 2000:
-        estimated_price = 2000
-    return round(estimated_price, 2)
+    return round(min(estimated_price, 2000), 2)
 
+# --- Financial Model Extraction ---
+def extract_from_excel(uploaded_file):
+    try:
+        wb = load_workbook(uploaded_file, data_only=True)
+        ws = wb["10Yr Model"] if "10Yr Model" in wb.sheetnames else wb.active
+        text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+
+        gross_area = None
+        market_rent = None
+        cashflow = None
+
+        for row in ws.iter_rows(values_only=True):
+            row_text = [str(x).strip().lower() if x else "" for x in row]
+            if "gross area (sqft)" in " ".join(row_text):
+                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
+            if "market rent value" in " ".join(row_text):
+                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
+            if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
+                cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
+
+        net_internal_area = gross_area * 0.5 if gross_area else 0
+        monthly_cashflow = cashflow / 12 if cashflow else 0
+        return currency, gross_area or 0, net_internal_area, market_rent or 0, monthly_cashflow or 0
+    except Exception as e:
+        st.warning(f"Could not parse Excel model: {e}")
+        return None
+
+def extract_from_pdf(uploaded_file):
+    try:
+        text = ""
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+        area_match = re.search(r"Gross Area \(sqft\).*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+        rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
+        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+
+        gross_area = float(area_match.group(1).replace(",", "")) if area_match else 0
+        market_rent = float(rent_match.group(1).replace(",", "")) if rent_match else 0
+        cashflow = float(cashflow_match.group(1).replace(",", "")) if cashflow_match else 0
+
+        net_internal_area = gross_area * 0.5
+        monthly_cashflow = cashflow / 12
+        return currency, gross_area, net_internal_area, market_rent, monthly_cashflow
+    except Exception as e:
+        st.warning(f"Could not parse PDF model: {e}")
+        return None
+
+# --- Pricing Template Filler ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
@@ -196,7 +229,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D5'] = currency
     ws['D6'] = area_units
     ws['D8'] = net_internal_area
-    ws['D9'] = ""  # clear D9 as requested
+    ws['D9'] = ""
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -215,10 +248,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
-
     ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
     ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
-
     ws['D35'] = total_cash_flow
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
@@ -227,20 +258,32 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
+uploaded_model = st.file_uploader("Upload Financial Model (Excel or PDF)", type=["xlsx", "xls", "pdf"])
+
+if uploaded_model:
+    parsed = extract_from_pdf(uploaded_model) if uploaded_model.name.endswith(".pdf") else extract_from_excel(uploaded_model)
+    if parsed:
+        currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
+        st.success("Values auto-extracted from model.")
+    else:
+        currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
+        total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
+        net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
+        monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
+        total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
+else:
+    currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
+    total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
+    net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
+    monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
+    total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
 
 centre_num = st.text_input("Centre #")
 centre_address = st.text_input("Centre Address")
-currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
 area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
-total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
-net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
-monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
-rent_source = st.selectbox("Source of Market Rent", 
-                           ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
+rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
-
-total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
 
 if st.button("Generate Template"):
     user_coords = get_coords(centre_address)
@@ -249,12 +292,9 @@ if st.button("Generate Template"):
     else:
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
         coworking_spaces = find_online_coworking_osm(user_coords)
-
         if len(coworking_spaces) == 0:
-            coworking_names = ["No coworking space found nearby", ""]
-            coworking_distances = ["", ""]
-            coworking_price1 = None
-            coworking_price2 = None
+            coworking_names, coworking_distances = ["No coworking space found nearby", ""], ["", ""]
+            coworking_price1, coworking_price2 = None, None
         elif len(coworking_spaces) == 1:
             coworking_names = [coworking_spaces[0][0], ""]
             coworking_distances = [f"{coworking_spaces[0][1]} mi", ""]
@@ -276,28 +316,12 @@ if st.button("Generate Template"):
 
         filled_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
-            centre_num,
-            centre_address,
-            currency,
-            area_units,
-            total_area,
-            net_internal_area,
-            monthly_rent,
-            rent_source,
-            service_charges,
-            property_tax,
-            comp_centres,
-            comp_distances,
-            quality1,
-            quality2,
-            diff1_str,
-            diff2_str,
-            coworking_names,
-            coworking_distances,
-            coworking_price1,
-            coworking_price2,
-            total_cash_flow,
+            centre_num, centre_address, currency, area_units,
+            total_area, net_internal_area, monthly_rent,
+            rent_source, service_charges, property_tax,
+            comp_centres, comp_distances, quality1, quality2,
+            diff1_str, diff2_str, coworking_names, coworking_distances,
+            coworking_price1, coworking_price2, total_cash_flow
         )
-
         with open(filled_file, "rb") as f:
             st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
