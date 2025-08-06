@@ -167,32 +167,7 @@ def safe_to_float(val):
     except:
         return 0
 
-# --- Financial Model Extraction ---
-def extract_from_excel(uploaded_file):
-    try:
-        wb = load_workbook(uploaded_file, data_only=True)
-        ws = wb["10Yr Model"] if "10Yr Model" in wb.sheetnames else wb.active
-        text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
-        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
-
-        gross_area = market_rent = cashflow = None
-        for row in ws.iter_rows(values_only=True):
-            row_text = [str(x).strip().lower() if x else "" for x in row]
-            if "gross area (sqft)" in " ".join(row_text):
-                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
-            if "market rent value" in " ".join(row_text):
-                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
-            if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
-                cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
-
-        net_internal_area = gross_area * 0.5 if gross_area else 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
-        return currency, gross_area or 0, net_internal_area, market_rent or 0, monthly_cashflow or 0
-    except Exception as e:
-        st.warning(f"Could not parse Excel model: {e}")
-        return None
-
-# --- PDF Extraction with improved right-of-text number matching ---
+# --- PDF Extraction with special handling for Headline Rent ---
 def extract_from_pdf(uploaded_file):
     try:
         text = ""
@@ -203,17 +178,13 @@ def extract_from_pdf(uploaded_file):
                     text += page_text + "\n"
 
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
-        st.write("Extracted PDF text sample:", text[:1000])  # debug snippet
 
-        # Helper to find first number after keywords
+        # Find Total Area Contracted (or fallback)
         def find_number_after_keywords(keywords):
-            # Join keywords with | for regex OR
             pattern = r"(?:" + "|".join(keywords) + r")\s*[:\-]?\s*([\d,\.]+)"
             match = re.search(pattern, text, re.IGNORECASE)
             return safe_to_float(match.group(1)) if match else None
 
-        # Total area contracted: try these keys, stop at first found
-        total_area = None
         total_area_keywords = [
             "Total Area Contracted",
             "Rentable Area",
@@ -223,44 +194,62 @@ def extract_from_pdf(uploaded_file):
         if total_area is None:
             total_area = 0
 
-        # Net internal area (Sellable Office Area)
-        net_internal_area = None
         net_internal_area_keywords = ["Sellable Office Area"]
         net_internal_area = find_number_after_keywords(net_internal_area_keywords)
         if net_internal_area is None:
             net_internal_area = total_area * 0.5
 
-        # Market rent: try Market Rent Value or Headline Rent (as reviewed by partner)
+        # Market rent extraction logic:
         market_rent = None
-        market_rent_keywords = [
-            "Market Rent Value",
-            r"Headline Rent \(as reviewed by partner\)"
-        ]
-        market_rent = find_number_after_keywords(market_rent_keywords)
-        if market_rent is None:
-            market_rent = 0
-        st.write(f"Market Rent found: {market_rent}")
 
-        # Net partner cashflow Year 1 (must match both)
-        # Since two keywords, use a more custom approach here:
-        cashflow = None
-        # find line containing both terms, then find number to right
-        lines = text.splitlines()
-        for line in lines:
-            if ("net partner cashflow" in line.lower() and "year 1" in line.lower()):
-                numbers = re.findall(r"[\d,\.]+", line)
-                if numbers:
-                    cashflow = safe_to_float(numbers[-1])
-                    break
-        if cashflow is None:
-            cashflow = 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
-        st.write(f"Monthly Cashflow calculated: {monthly_cashflow}")
+        # Check if "Headline Rent (as reviewed by partner)" exists
+        if re.search(r"Headline Rent \(as reviewed by partner\)", text, re.IGNORECASE):
+            # Find "USD psft p.a." text and get the number immediately to its right (on the same line)
+            lines = text.splitlines()
+            market_rent_found = False
+            for line in lines:
+                if "USD psft p.a." in line:
+                    # Extract number after "USD psft p.a."
+                    match = re.search(r"USD psft p\.a\.\s*[:\-]?\s*([\d,\.]+)", line, re.IGNORECASE)
+                    if match:
+                        market_rent = safe_to_float(match.group(1))
+                        market_rent_found = True
+                        break
+            if not market_rent_found:
+                market_rent = 0
+        else:
+            # Otherwise, get number after Market Rent Value
+            market_rent_keywords = ["Market Rent Value"]
+            market_rent = find_number_after_keywords(market_rent_keywords)
+            if market_rent is None:
+                market_rent = 0
 
-        return currency, total_area, net_internal_area, market_rent, monthly_cashflow
+        return currency, total_area, net_internal_area, market_rent
 
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
+        return None
+
+# --- Excel extraction (left unchanged, optional) ---
+def extract_from_excel(uploaded_file):
+    try:
+        wb = load_workbook(uploaded_file, data_only=True)
+        ws = wb["10Yr Model"] if "10Yr Model" in wb.sheetnames else wb.active
+        text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+
+        gross_area = market_rent = None
+        for row in ws.iter_rows(values_only=True):
+            row_text = [str(x).strip().lower() if x else "" for x in row]
+            if "gross area (sqft)" in " ".join(row_text):
+                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
+            if "market rent value" in " ".join(row_text):
+                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
+
+        net_internal_area = gross_area * 0.5 if gross_area else 0
+        return currency, gross_area or 0, net_internal_area, market_rent or 0
+    except Exception as e:
+        st.warning(f"Could not parse Excel model: {e}")
         return None
 
 # --- Pricing Template Filler ---
@@ -271,8 +260,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
                           coworking_names, coworking_distances,
-                          coworking_price1, coworking_price2,
-                          total_cash_flow):
+                          coworking_price1, coworking_price2):
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -303,10 +291,6 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
     ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
-    ws['D35'] = total_cash_flow
-
-    st.write(f"Writing Market Rent to D10: {monthly_rent}")
-    st.write(f"Writing Total Monthly Cash Flow to D35: {total_cash_flow}")
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -317,22 +301,26 @@ st.title("Pricing Template 2025 Filler")
 uploaded_model = st.file_uploader("Upload Financial Model (Excel or PDF)", type=["xlsx", "xls", "pdf"])
 
 if uploaded_model:
-    parsed = extract_from_pdf(uploaded_model) if uploaded_model.name.endswith(".pdf") else extract_from_excel(uploaded_model)
+    if uploaded_model.name.lower().endswith(".pdf"):
+        parsed = extract_from_pdf(uploaded_model)
+    else:
+        parsed = extract_from_excel(uploaded_model)
+
     if parsed:
-        currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
-        st.success("Values auto-extracted from model.")
+        if len(parsed) == 5:
+            currency, total_area, net_internal_area, monthly_rent, _ = parsed
+        else:
+            currency, total_area, net_internal_area, monthly_rent = parsed
     else:
         currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
         total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
         net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
         monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
-        total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
 else:
     currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
     total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
     net_internal_area = st.number_input("Net Internal Area", min_value=0.0, format="%.2f")
     monthly_rent = st.number_input("Monthly Market Rent", min_value=0.0, format="%.2f")
-    total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", min_value=0.0, format="%.2f")
 
 centre_num = st.text_input("Centre #")
 centre_address = st.text_input("Centre Address")
@@ -362,9 +350,6 @@ if st.button("Generate Template"):
             coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units)
             coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
-        st.markdown("### Closest Market Comparables")
-        st.write(comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price)
-
         output_file = fill_pricing_template(
             "Pricing Template 2025.xlsx",
             centre_num,
@@ -386,7 +371,6 @@ if st.button("Generate Template"):
             coworking_names,
             coworking_distances,
             coworking_price1,
-            coworking_price2,
-            total_cash_flow
+            coworking_price2
         )
         st.success(f"Template generated successfully! File saved at: {output_file}")
