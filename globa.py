@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 import tempfile
 import pdfplumber
 import re
+import os
 
 # --- Hide Streamlit Branding and Toolbar ---
 hide_streamlit_style = """
@@ -141,7 +142,7 @@ def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
     if location:
         addr = location.raw.get('address', {})
-        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or 
+        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or
                 addr.get('village') or addr.get('hamlet'))
         if city:
             return city
@@ -200,43 +201,43 @@ def extract_from_pdf(uploaded_file):
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
-
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
 
-        # Find Gross or Rentable Area (for Total Area Contracted)
-        gross_area_match = re.search(r"(Gross Area|Rentable Area)[^\d]*([\d,\.]+)", text, re.IGNORECASE)
-        total_area = safe_to_float(gross_area_match.group(2)) if gross_area_match else 0
+        # Patterns for total area contracted (look for "Rentable Area" or "Total Area Contracted")
+        rentable_area_match = re.search(r"Rentable Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
+        total_area_contracted_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
+        gross_area_match = re.search(r"Gross Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
 
-        # Find Market Rent Value OR Headline Rent (as reviewed by partner)
-        rent_match = re.search(r"Market Rent Value[^\d]*([\d,\.]+)", text, re.IGNORECASE)
-        headline_rent_match = re.search(r"Headline Rent \(as reviewed by partner\)[^\d]*([\d,\.]+)", text, re.IGNORECASE)
+        # Pick first found in order: Total Area Contracted, Rentable Area, Gross Area
+        total_area = None
+        for match in [total_area_contracted_match, rentable_area_match, gross_area_match]:
+            if match:
+                total_area = safe_to_float(match.group(1))
+                break
+        if total_area is None:
+            total_area = 0
 
-        if rent_match and headline_rent_match:
-            # Choose which appears first in the text
-            rent_pos = text.find(rent_match.group(0))
-            headline_pos = text.find(headline_rent_match.group(0))
-            if rent_pos < headline_pos:
-                market_rent = safe_to_float(rent_match.group(1))
-            else:
-                market_rent = safe_to_float(headline_rent_match.group(1))
-        elif rent_match:
-            market_rent = safe_to_float(rent_match.group(1))
-        elif headline_rent_match:
-            market_rent = safe_to_float(headline_rent_match.group(1))
-        else:
+        # Patterns for net internal area (look for "Sellable Office Area")
+        sellable_area_match = re.search(r"Sellable Office Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
+        net_internal_area = safe_to_float(sellable_area_match.group(1)) if sellable_area_match else total_area * 0.5
+
+        # Patterns for market rent: check "Market Rent Value" or "Headline Rent (as reviewed by partner)"
+        market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
+        headline_rent_match = re.search(r"Headline Rent \(as reviewed by partner\).*?([\d,\.]+)", text, re.IGNORECASE)
+        market_rent = None
+        for match in [market_rent_match, headline_rent_match]:
+            if match:
+                market_rent = safe_to_float(match.group(1))
+                break
+        if market_rent is None:
             market_rent = 0
 
-        # Find Net Internal Area by Sellable Office Area, fallback total_area * 0.5
-        net_area_match = re.search(r"Sellable Office Area[^\d]*([\d,\.]+)", text, re.IGNORECASE)
-        net_internal_area = safe_to_float(net_area_match.group(1)) if net_area_match else total_area * 0.5
-
-        # Find Net Partner Cashflow (Year 1), divide by 12 for monthly cashflow
-        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1[^\d]*([\d,\.]+)", text, re.IGNORECASE)
+        # Pattern for total cash flow: "Net Partner Cashflow" and "Year 1"
+        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
         cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
         monthly_cashflow = cashflow / 12 if cashflow else 0
 
         return currency, total_area, net_internal_area, market_rent, monthly_cashflow
-
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
         return None
@@ -251,6 +252,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           coworking_names, coworking_distances,
                           coworking_price1, coworking_price2,
                           total_cash_flow):
+    if not os.path.exists(template_path):
+        st.error(f"Template file not found: {template_path}")
+        return None
+
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
 
@@ -258,10 +263,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
-    ws['D7'] = total_area              # Total Area Contracted
+    ws['D7'] = total_area                # Total Area Contracted here
     ws['D8'] = net_internal_area
     ws['D9'] = ""
-    ws['D10'] = monthly_rent           # Market Rent
+    ws['D10'] = monthly_rent             # Market Rent here
     ws['D11'] = rent_source
     ws['D12'] = service_charges
     ws['D13'] = property_tax
@@ -281,7 +286,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
     ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
-    ws['D35'] = total_cash_flow        # Total Monthly Expected Cashflow
+    ws['D35'] = total_cash_flow          # Total Monthly Expected Cash Flow Maturity
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -292,7 +297,11 @@ st.title("Pricing Template 2025 Filler")
 uploaded_model = st.file_uploader("Upload Financial Model (Excel or PDF)", type=["xlsx", "xls", "pdf"])
 
 if uploaded_model:
-    parsed = extract_from_pdf(uploaded_model) if uploaded_model.name.endswith(".pdf") else extract_from_excel(uploaded_model)
+    if uploaded_model.name.endswith(".pdf"):
+        parsed = extract_from_pdf(uploaded_model)
+    else:
+        parsed = extract_from_excel(uploaded_model)
+
     if parsed:
         currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
         st.success("Values auto-extracted from model.")
@@ -338,26 +347,24 @@ if st.button("Generate Template"):
             coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
         st.markdown("### Closest Comps")
-        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]} ({quality1}, {diff1_str})")
-        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]} ({quality2}, {diff2_str})")
+        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
+        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
 
-        st.markdown("### Nearby Coworking Spaces")
-        for i, (name, dist) in enumerate(zip(coworking_names, coworking_distances)):
-            st.write(f"Coworking Space {i+1}: {name}, Distance: {dist}")
+        st.markdown("### Closest Coworking Spaces")
+        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1 if coworking_price1 is not None else 'N/A'} {currency}")
+        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2 if coworking_price2 is not None else 'N/A'} {currency}")
 
-        tmp_file = fill_pricing_template(
-            "Pricing Template 2025 FINAL.xlsx",
-            centre_num, centre_address, currency,
-            area_units, total_area, net_internal_area,
-            monthly_rent, rent_source,
-            service_charges, property_tax,
-            comp_centres, comp_distances,
-            quality1, quality2, diff1_str, diff2_str,
-            coworking_names, coworking_distances,
-            coworking_price1, coworking_price2,
-            total_cash_flow
+        filled_file = fill_pricing_template(
+            "Pricing Template 2025.xlsx",
+            centre_num, centre_address, currency, area_units,
+            total_area, net_internal_area, monthly_rent,
+            rent_source, service_charges, property_tax,
+            comp_centres, comp_distances, quality1, quality2,
+            diff1_str, diff2_str, coworking_names, coworking_distances,
+            coworking_price1, coworking_price2, total_cash_flow
         )
+        if filled_file:
+            with open(filled_file, "rb") as f:
+                st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
 
-        with open(tmp_file, "rb") as f:
-            st.download_button("Download Filled Pricing Template", f, file_name="Pricing_Template_2025_Filled.xlsx")
 
