@@ -203,21 +203,39 @@ def extract_from_pdf(uploaded_file):
 
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
 
-        # --- Look for Gross Area or Rentable Area ---
+        # Find Gross or Rentable Area (for Total Area Contracted)
         gross_area_match = re.search(r"(Gross Area|Rentable Area)[^\d]*([\d,\.]+)", text, re.IGNORECASE)
-        rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
-        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+        total_area = safe_to_float(gross_area_match.group(2)) if gross_area_match else 0
 
-        gross_area = safe_to_float(gross_area_match.group(2)) if gross_area_match else 0
-        market_rent = safe_to_float(rent_match.group(1)) if rent_match else 0
-        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
+        # Find Market Rent Value OR Headline Rent (as reviewed by partner)
+        rent_match = re.search(r"Market Rent Value[^\d]*([\d,\.]+)", text, re.IGNORECASE)
+        headline_rent_match = re.search(r"Headline Rent \(as reviewed by partner\)[^\d]*([\d,\.]+)", text, re.IGNORECASE)
 
-        # --- Look for Net Internal Area alternative label ---
+        if rent_match and headline_rent_match:
+            # Choose which appears first in the text
+            rent_pos = text.find(rent_match.group(0))
+            headline_pos = text.find(headline_rent_match.group(0))
+            if rent_pos < headline_pos:
+                market_rent = safe_to_float(rent_match.group(1))
+            else:
+                market_rent = safe_to_float(headline_rent_match.group(1))
+        elif rent_match:
+            market_rent = safe_to_float(rent_match.group(1))
+        elif headline_rent_match:
+            market_rent = safe_to_float(headline_rent_match.group(1))
+        else:
+            market_rent = 0
+
+        # Find Net Internal Area by Sellable Office Area, fallback total_area * 0.5
         net_area_match = re.search(r"Sellable Office Area[^\d]*([\d,\.]+)", text, re.IGNORECASE)
-        net_internal_area = safe_to_float(net_area_match.group(1)) if net_area_match else gross_area * 0.5
+        net_internal_area = safe_to_float(net_area_match.group(1)) if net_area_match else total_area * 0.5
 
-        monthly_cashflow = cashflow / 12
-        return currency, gross_area, net_internal_area, market_rent, monthly_cashflow
+        # Find Net Partner Cashflow (Year 1), divide by 12 for monthly cashflow
+        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1[^\d]*([\d,\.]+)", text, re.IGNORECASE)
+        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
+        monthly_cashflow = cashflow / 12 if cashflow else 0
+
+        return currency, total_area, net_internal_area, market_rent, monthly_cashflow
 
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
@@ -240,9 +258,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['C3'] = centre_address
     ws['D5'] = currency
     ws['D6'] = area_units
+    ws['D7'] = total_area              # Total Area Contracted
     ws['D8'] = net_internal_area
     ws['D9'] = ""
-    ws['D10'] = monthly_rent
+    ws['D10'] = monthly_rent           # Market Rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
     ws['D13'] = property_tax
@@ -262,7 +281,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     ws['D33'] = coworking_price1 if coworking_price1 is not None else ""
     ws['E33'] = coworking_price2 if coworking_price2 is not None else ""
-    ws['D35'] = total_cash_flow
+    ws['D35'] = total_cash_flow        # Total Monthly Expected Cashflow
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -319,21 +338,26 @@ if st.button("Generate Template"):
             coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
         st.markdown("### Closest Comps")
-        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
-        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
+        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]} ({quality1}, {diff1_str})")
+        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]} ({quality2}, {diff2_str})")
 
-        st.markdown("### Closest Coworking Spaces")
-        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1 if coworking_price1 is not None else 'N/A'} {currency}")
-        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2 if coworking_price2 is not None else 'N/A'} {currency}")
+        st.markdown("### Nearby Coworking Spaces")
+        for i, (name, dist) in enumerate(zip(coworking_names, coworking_distances)):
+            st.write(f"Coworking Space {i+1}: {name}, Distance: {dist}")
 
-        filled_file = fill_pricing_template(
-            "Pricing Template 2025.xlsx",
-            centre_num, centre_address, currency, area_units,
-            total_area, net_internal_area, monthly_rent,
-            rent_source, service_charges, property_tax,
-            comp_centres, comp_distances, quality1, quality2,
-            diff1_str, diff2_str, coworking_names, coworking_distances,
-            coworking_price1, coworking_price2, total_cash_flow
+        tmp_file = fill_pricing_template(
+            "Pricing Template 2025 FINAL.xlsx",
+            centre_num, centre_address, currency,
+            area_units, total_area, net_internal_area,
+            monthly_rent, rent_source,
+            service_charges, property_tax,
+            comp_centres, comp_distances,
+            quality1, quality2, diff1_str, diff2_str,
+            coworking_names, coworking_distances,
+            coworking_price1, coworking_price2,
+            total_cash_flow
         )
-        with open(filled_file, "rb") as f:
-            st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
+
+        with open(tmp_file, "rb") as f:
+            st.download_button("Download Filled Pricing Template", f, file_name="Pricing_Template_2025_Filled.xlsx")
+
