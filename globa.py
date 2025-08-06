@@ -197,20 +197,28 @@ def extract_from_pdf(uploaded_file):
         text = ""
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
-                text += page.extract_text() + "\n"
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
 
-        area_match = re.search(r"Gross Area \(sqft\).*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+        # --- Look for Gross Area or Rentable Area ---
+        gross_area_match = re.search(r"(Gross Area|Rentable Area)[^\d]*([\d,\.]+)", text, re.IGNORECASE)
         rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
         cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
 
-        gross_area = safe_to_float(area_match.group(1)) if area_match else 0
+        gross_area = safe_to_float(gross_area_match.group(2)) if gross_area_match else 0
         market_rent = safe_to_float(rent_match.group(1)) if rent_match else 0
         cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
 
-        net_internal_area = gross_area * 0.5
+        # --- Look for Net Internal Area alternative label ---
+        net_area_match = re.search(r"Sellable Office Area[^\d]*([\d,\.]+)", text, re.IGNORECASE)
+        net_internal_area = safe_to_float(net_area_match.group(1)) if net_area_match else gross_area * 0.5
+
         monthly_cashflow = cashflow / 12
         return currency, gross_area, net_internal_area, market_rent, monthly_cashflow
+
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
         return None
