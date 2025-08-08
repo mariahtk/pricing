@@ -294,7 +294,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
-uploaded_model = st.file_uploader("Upload Financial Model (Excel or PDF)", type=["xlsx", "xls", "pdf"])
+uploaded_model = st.file_uploader("Upload Financial Model (PDF)", type=["xlsx", "xls", "pdf"])
 
 # Variables for extracted/default values
 currency = None
