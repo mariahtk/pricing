@@ -305,6 +305,9 @@ if uploaded_model:
     if parsed:
         currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
         st.success("Values auto-extracted from model.")
+        # ** Added override input for monthly rent here **
+        monthly_rent_override = st.number_input("Override Monthly Market Rent", value=monthly_rent, min_value=0.0, format="%.2f")
+        monthly_rent = monthly_rent_override
     else:
         currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
         total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
@@ -346,23 +349,36 @@ if st.button("Generate Template"):
             coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units)
             coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
-        st.markdown("### Closest Comps")
-        st.write(f"Comp #1: {comp_centres[0]} at {comp_distances[0]}, Quality: {quality1} ({diff1_str})")
-        st.write(f"Comp #2: {comp_centres[1]} at {comp_distances[1]}, Quality: {quality2} ({diff2_str})")
-
-        st.markdown("### Closest Coworking Spaces")
-        st.write(f"1st Closest: {coworking_names[0]} ({coworking_distances[0]}), Estimated 2-window Office Price: {coworking_price1 if coworking_price1 is not None else 'N/A'} {currency}")
-        st.write(f"2nd Closest: {coworking_names[1]} ({coworking_distances[1]}), Estimated 2-window Office Price: {coworking_price2 if coworking_price2 is not None else 'N/A'} {currency}")
-
-        filled_file = fill_pricing_template(
-            "Pricing Template 2025.xlsx",
-            centre_num, centre_address, currency, area_units,
-            total_area, net_internal_area, monthly_rent,
-            rent_source, service_charges, property_tax,
-            comp_centres, comp_distances, quality1, quality2,
-            diff1_str, diff2_str, coworking_names, coworking_distances,
-            coworking_price1, coworking_price2, total_cash_flow
+        output_file = fill_pricing_template(
+            template_path="Pricing Template 2025.xlsx",
+            centre_num=centre_num,
+            centre_address=centre_address,
+            currency=currency,
+            area_units=area_units,
+            total_area=total_area,
+            net_internal_area=net_internal_area,
+            monthly_rent=monthly_rent,
+            rent_source=rent_source,
+            service_charges=service_charges,
+            property_tax=property_tax,
+            comp_centres=comp_centres,
+            comp_distances=comp_distances,
+            quality1=quality1,
+            quality2=quality2,
+            diff1_str=diff1_str,
+            diff2_str=diff2_str,
+            coworking_names=coworking_names,
+            coworking_distances=coworking_distances,
+            coworking_price1=coworking_price1,
+            coworking_price2=coworking_price2,
+            total_cash_flow=total_cash_flow,
         )
-        if filled_file:
-            with open(filled_file, "rb") as f:
-                st.download_button("Download Filled Pricing Template", data=f, file_name="Pricing_Template_2025_Filled.xlsx")
+
+        if output_file:
+            with open(output_file, "rb") as f:
+                st.download_button(
+                    label="Download Filled Pricing Template",
+                    data=f,
+                    file_name="Pricing Template 2025 Filled.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
