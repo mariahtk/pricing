@@ -266,7 +266,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D7'] = total_area                # Total Area Contracted here
     ws['D8'] = net_internal_area
     ws['D9'] = ""
-    ws['D10'] = monthly_rent             # Market Rent here
+    ws['D10'] = monthly_rent             # Market Rent here (updated to accept override)
     ws['D11'] = rent_source
     ws['D12'] = service_charges
     ws['D13'] = property_tax
@@ -305,9 +305,19 @@ if uploaded_model:
     if parsed:
         currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
         st.success("Values auto-extracted from model.")
-        # ** Added override input for monthly rent here **
-        monthly_rent_override = st.number_input("Override Monthly Market Rent", value=monthly_rent, min_value=0.0, format="%.2f")
+
+        # Make sure monthly_rent is a float for Streamlit UI consistency
+        try:
+            monthly_rent = float(monthly_rent)
+        except (TypeError, ValueError):
+            monthly_rent = 0.0
+
+        # Add override input to allow user to change monthly_rent after extraction
+        monthly_rent_override = st.number_input(
+            "Override Monthly Market Rent", value=monthly_rent, min_value=0.0, format="%.2f"
+        )
         monthly_rent = monthly_rent_override
+
     else:
         currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
         total_area = st.number_input("Total Area Contracted", min_value=0.0, format="%.2f")
@@ -349,36 +359,18 @@ if st.button("Generate Template"):
             coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units)
             coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units)
 
-        output_file = fill_pricing_template(
-            template_path="Pricing Template 2025.xlsx",
-            centre_num=centre_num,
-            centre_address=centre_address,
-            currency=currency,
-            area_units=area_units,
-            total_area=total_area,
-            net_internal_area=net_internal_area,
-            monthly_rent=monthly_rent,
-            rent_source=rent_source,
-            service_charges=service_charges,
-            property_tax=property_tax,
-            comp_centres=comp_centres,
-            comp_distances=comp_distances,
-            quality1=quality1,
-            quality2=quality2,
-            diff1_str=diff1_str,
-            diff2_str=diff2_str,
-            coworking_names=coworking_names,
-            coworking_distances=coworking_distances,
-            coworking_price1=coworking_price1,
-            coworking_price2=coworking_price2,
-            total_cash_flow=total_cash_flow,
-        )
-
+        template_path = "Pricing Template 2025.xlsx"
+        output_file = fill_pricing_template(template_path, centre_num, centre_address, currency,
+                                            area_units, total_area, net_internal_area,
+                                            monthly_rent, rent_source,
+                                            service_charges, property_tax,
+                                            comp_centres, comp_distances,
+                                            quality1, quality2, diff1_str, diff2_str,
+                                            coworking_names, coworking_distances,
+                                            coworking_price1, coworking_price2,
+                                            total_cash_flow)
         if output_file:
             with open(output_file, "rb") as f:
-                st.download_button(
-                    label="Download Filled Pricing Template",
-                    data=f,
-                    file_name="Pricing Template 2025 Filled.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button(label="Download Filled Template", data=f, file_name=f"Pricing_{centre_num}.xlsx")
+
+            os.unlink(output_file)
