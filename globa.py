@@ -78,15 +78,14 @@ def find_closest_comps(user_coords):
         comp_distances.append("")
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
-# --- UPDATED: Always return 2 coworking spaces, no radius restriction ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
-    radius = 10000  # initial radius in meters
+    radius = 10000
     step = 10000
     coworking_spaces = []
     
-    while True:  # keep expanding until we get at least 2
+    while True:
         query = f"""
         [out:json];
         node["office"="coworking"](around:{radius},{lat},{lon});
@@ -107,7 +106,6 @@ def find_online_coworking_osm(user_coords):
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
         
-        # combine old and new, keep closest for duplicates
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
@@ -121,9 +119,8 @@ def find_online_coworking_osm(user_coords):
         
         if len(coworking_spaces) >= 2:
             break
-        radius += step  # keep increasing radius
+        radius += step
 
-    # Ensure exactly 2 entries
     while len(coworking_spaces) < 2:
         coworking_spaces.append(("No coworking space found", 0, None, None))
         
@@ -150,9 +147,10 @@ def extract_from_excel(uploaded_file):
                 market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
             if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
                 cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
-        net_internal_area = gross_area * 0.5 if gross_area else 0
+        total_area = gross_area or 0
+        net_internal_area = total_area * 0.5
         monthly_cashflow = cashflow / 12 if cashflow else 0
-        return currency, gross_area or 0, net_internal_area, market_rent or 0, monthly_cashflow or 0
+        return currency, total_area, net_internal_area, market_rent or 0, monthly_cashflow or 0
     except Exception as e:
         st.warning(f"Could not parse Excel model: {e}")
         return None
@@ -168,8 +166,7 @@ def extract_from_pdf(uploaded_file):
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
         total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
         total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
-        sellable_area_match = re.search(r"Sellable Office Area.*?([\d,\.]+)", text, re.IGNORECASE)
-        net_internal_area = safe_to_float(sellable_area_match.group(1)) if sellable_area_match else total_area * 0.5
+        net_internal_area = total_area * 0.5
         market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
         market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
         cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
@@ -181,13 +178,10 @@ def extract_from_pdf(uploaded_file):
         return None
 
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
-                          area_units, total_area, net_internal_area,
-                          monthly_rent, rent_source,
-                          service_charges, property_tax,
-                          comp_centres, comp_distances,
+                          area_units, total_area, monthly_rent, rent_source,
+                          service_charges, property_tax, comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
-                          coworking_names, coworking_distances,
-                          market_price,
+                          coworking_names, coworking_distances, market_price,
                           total_cash_flow):
     if not os.path.exists(template_path):
         st.error(f"Template file not found: {template_path}")
@@ -199,7 +193,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D5'] = currency
     ws['D6'] = area_units
     ws['D7'] = total_area
-    ws['D8'] = net_internal_area
+    ws['D8'] = total_area * 0.5  # Net Internal Area calculated
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -217,9 +211,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     
-    # --- UPDATED: D33/E33 = market_price * 30
-    ws['D33'] = market_price * 30 if market_price else 0
-    ws['E33'] = market_price * 30 if market_price else 0
+    # D33/E33 = market_price * 30, capped at 1500
+    ws['D33'] = min(market_price * 30, 1500) if market_price else 0
+    ws['E33'] = min(market_price * 30, 1500) if market_price else 0
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
@@ -231,7 +225,6 @@ st.title("Pricing Template 2025 Filler")
 uploaded_model = st.file_uploader("Upload Financial Model (PDF/XLSX)", type=["xlsx", "xls", "pdf"])
 currency = None
 total_area = 0.0
-net_internal_area = 0.0
 monthly_rent = 0.0
 total_cash_flow = 0.0
 
@@ -254,19 +247,6 @@ area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
 rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
-
-# --- Overrides for Total Area & Net Internal Area ---
-total_area_override = st.number_input(
-    "Override Total Area Contracted", 
-    value=float(total_area) if total_area else 0.0, 
-    min_value=0.0
-)
-
-net_internal_area_override = st.number_input(
-    "Override Net Internal Area", 
-    value=float(net_internal_area) if net_internal_area else 0.0, 
-    min_value=0.0
-)
 
 monthly_rent_override = st.number_input(
     "Override Monthly Market Rent", 
@@ -303,8 +283,7 @@ if st.button("Generate Pricing Template"):
             centre_address,
             currency,
             area_units,
-            total_area_override,
-            net_internal_area_override,
+            total_area,
             monthly_rent_override,
             rent_source,
             service_charges,
