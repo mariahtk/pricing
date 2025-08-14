@@ -22,6 +22,8 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # --- Load global pricing data ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
+market_rent_usa = pd.read_excel("Global Pricing.xlsx", sheet_name="USA Market Rent")
+market_rent_canada = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada Market Rent")
 
 def clean_columns(df):
     df.columns = df.columns.str.strip().str.replace('\n', '').str.replace('\r', '')
@@ -31,6 +33,9 @@ usa_data = clean_columns(usa_data)
 canada_data = clean_columns(canada_data)
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
+
+market_rent_all = pd.concat([market_rent_usa, market_rent_canada], ignore_index=True)
+market_rent_all = clean_columns(market_rent_all)
 
 # --- Geolocator ---
 geolocator = Nominatim(user_agent="pricing_app")
@@ -77,6 +82,15 @@ def find_closest_comps(user_coords):
         comp_centres.append("")
         comp_distances.append("")
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
+
+def get_avg_market_rate_for_comps(comp_centres):
+    rates = []
+    for centre in comp_centres:
+        if centre:
+            match = market_rent_all[market_rent_all['Centre #'] == centre]
+            if not match.empty and 'Market Rate' in match.columns:
+                rates.append(match['Market Rate'].iloc[0])
+    return sum(rates)/len(rates) if rates else 0.0
 
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
@@ -209,7 +223,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D6'] = area_units
     ws['D7'] = total_area
     ws['D8'] = total_area * 0.5  # Net Internal Area
-    ws['D10'] = monthly_rent
+    # --- Use avg market rate from Market Rent tab ---
+    avg_market_rate = get_avg_market_rate_for_comps(comp_centres)
+    ws['D10'] = avg_market_rate if avg_market_rate > 0 else monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
     ws['D13'] = property_tax
@@ -225,12 +241,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
-    
     # D33/E33 = D10 * 30
     d10_value = ws['D10'].value or 0
     ws['D33'] = d10_value * 30
     ws['E33'] = d10_value * 30
-    
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -286,7 +300,7 @@ market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_r
 if centre_address:
     user_coords = get_coords(centre_address)
     if user_coords:
-        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, market_price = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
         st.markdown("### Closest Comps")
         st.write(f"**Comp #1:** {comp_centres[0]} — {comp_distances[0]} — Quality: {quality1} — {diff1_str}")
         if comp_centres[1]:
