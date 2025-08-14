@@ -78,14 +78,15 @@ def find_closest_comps(user_coords):
         comp_distances.append("")
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
+# --- UPDATED: Always return 2 coworking spaces, no radius restriction ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
-    radius = 10000
+    radius = 10000  # initial radius in meters
     step = 10000
-    max_radius = 100000
     coworking_spaces = []
-    while radius <= max_radius:
+    
+    while True:  # keep expanding until we get at least 2
         query = f"""
         [out:json];
         node["office"="coworking"](around:{radius},{lat},{lon});
@@ -96,6 +97,7 @@ def find_online_coworking_osm(user_coords):
             data = response.json()
         except:
             break
+
         new_spaces = []
         for element in data.get('elements', []):
             name = element['tags'].get('name')
@@ -104,20 +106,27 @@ def find_online_coworking_osm(user_coords):
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
+        
+        # combine old and new, keep closest for duplicates
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
             if name not in unique_spaces or dist < unique_spaces[name][0]:
                 unique_spaces[name] = (dist, c_lat, c_lon)
+        
         coworking_spaces = sorted(
             [(name, val[0], val[1], val[2]) for name, val in unique_spaces.items()],
             key=lambda x: x[1]
         )
+        
         if len(coworking_spaces) >= 2:
             break
-        radius += step
-    if len(coworking_spaces) == 0:
-        coworking_spaces = [("No coworking space found nearby", 0, None, None)]
+        radius += step  # keep increasing radius
+
+    # Ensure exactly 2 entries
+    while len(coworking_spaces) < 2:
+        coworking_spaces.append(("No coworking space found", 0, None, None))
+        
     return coworking_spaces[:2]
 
 def safe_to_float(val):
@@ -208,9 +217,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     
-    # --- UPDATED: D33 and E33 as market price * 30 ---
-    ws['D33'] = min(market_price * 30, 2000) if market_price else 0
-    ws['E33'] = min(market_price * 30, 2000) if market_price else 0
+    # --- UPDATED: D33/E33 = market_price * 30
+    ws['D33'] = market_price * 30 if market_price else 0
+    ws['E33'] = market_price * 30 if market_price else 0
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
