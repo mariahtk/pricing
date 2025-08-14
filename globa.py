@@ -8,15 +8,13 @@ import tempfile
 import pdfplumber
 import re
 import os
-import time
-import json
 
 # --- Hide Streamlit Branding and Toolbar ---
 hide_streamlit_style = """
     <style>
-    #MainMenu {visibility: hidden;}     /* Hide hamburger menu */
-    footer {visibility: hidden;}       /* Hide footer (Made with Streamlit) */
-    header {visibility: hidden;}       /* Hide top header (share, edit, github) */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
@@ -52,12 +50,10 @@ def format_diff(value):
 def find_closest_comps(user_coords):
     valid_data = all_data.dropna(subset=['Latitude', 'Longitude', 'Price']).copy()
     valid_data = valid_data[(valid_data['Latitude'] != 0) & (valid_data['Longitude'] != 0)]
-
     valid_data['distance'] = valid_data.apply(
         lambda row: round(geodesic(user_coords, (row['Latitude'], row['Longitude'])).miles, 2),
         axis=1
     )
-
     sorted_data = valid_data.sort_values('distance')
     comps5 = sorted_data[['Centre #', 'Latitude', 'Longitude', 'Price', 'distance']].head(5)
     avg_price = comps5['Price'].mean()
@@ -86,11 +82,9 @@ def find_closest_comps(user_coords):
 
     return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
-# --- Robust coworking lookup with retries ---
-def find_online_coworking_osm(user_coords, max_retries=3, backoff_factor=2):
+def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
-
     radius = 10000
     step = 10000
     max_radius = 100000
@@ -102,40 +96,12 @@ def find_online_coworking_osm(user_coords, max_retries=3, backoff_factor=2):
         node["office"="coworking"](around:{radius},{lat},{lon});
         out;
         """
+        response = requests.get(overpass_url, params={'data': query})
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                response = requests.get(overpass_url, params={'data': query}, timeout=15)
-                content_type = response.headers.get("Content-Type", "").lower()
-
-                if response.status_code != 200:
-                    st.warning(f"Overpass API error {response.status_code} (attempt {attempt})")
-                    st.text(response.text[:300])
-                    raise requests.RequestException("Non-200 response")
-
-                if "application/json" not in content_type:
-                    st.warning(f"Overpass API returned non-JSON response (attempt {attempt})")
-                    st.text(response.text[:300])
-                    raise requests.RequestException("Non-JSON response")
-
-                try:
-                    data = response.json()
-                    break  # success
-                except json.JSONDecodeError:
-                    st.warning(f"Failed to parse JSON from Overpass API (attempt {attempt})")
-                    st.text(response.text[:300])
-                    raise requests.RequestException("Invalid JSON")
-                
-            except requests.RequestException as e:
-                if attempt < max_retries:
-                    wait_time = backoff_factor ** (attempt - 1)
-                    st.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    st.error(f"Failed to fetch coworking data after {max_retries} attempts: {e}")
-                    return [("API request failed", 0, None, None)]
-
-        # Process results
         new_spaces = []
         for element in data.get('elements', []):
             name = element['tags'].get('name')
@@ -159,26 +125,18 @@ def find_online_coworking_osm(user_coords, max_retries=3, backoff_factor=2):
             break
         radius += step
 
-    if not coworking_spaces:
+    if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0, None, None)]
     return coworking_spaces[:2]
 
-# --- City rent lookups ---
-city_rent_lookup_sqft = {
-    "New York": 70, "San Francisco": 65, "Chicago": 40, "Los Angeles": 45,
-    "Seattle": 50, "Boston": 55, "Austin": 35, "Denver": 30, "Miami": 30,
-    "Washington": 50, "Atlanta": 28, "Dallas": 32, "Houston": 28,
-    "Toronto": 50, "Vancouver": 45, "Montreal": 35, "Calgary": 30,
-    "Ottawa": 32, "Edmonton": 28, "Winnipeg": 25, "Quebec": 25,
-}
+city_rent_lookup_sqft = {"New York":70,"San Francisco":65,"Chicago":40,"Los Angeles":45,"Seattle":50,"Boston":55,"Austin":35,"Denver":30,"Miami":30,"Washington":50,"Atlanta":28,"Dallas":32,"Houston":28,"Toronto":50,"Vancouver":45,"Montreal":35,"Calgary":30,"Ottawa":32,"Edmonton":28,"Winnipeg":25,"Quebec":25}
 city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}
 
 def get_city_from_coords(lat, lon):
     location = geolocator.reverse((lat, lon), exactly_one=True)
     if location:
         addr = location.raw.get('address', {})
-        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or
-                addr.get('village') or addr.get('hamlet'))
+        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('village') or addr.get('hamlet'))
         if city:
             return city
         state = addr.get('state')
@@ -192,18 +150,17 @@ def estimate_coworking_price(lat, lon, area_units):
     if not city:
         price_per_unit = 5 if area_units == "SqFt" else 55
     else:
-        price_per_unit = city_rent_lookup_sqft.get(city, 5) if area_units == "SqFt" else city_rent_lookup_sqm.get(city, 55)
+        price_per_unit = city_rent_lookup_sqft.get(city, 5) if area_units=="SqFt" else city_rent_lookup_sqm.get(city, 55)
     estimated_price = price_per_unit * fixed_office_size
     return round(min(estimated_price, 2000), 2)
 
-# --- Safe numeric conversion ---
 def safe_to_float(val):
     try:
         return float(val.replace(",", "")) if val and val != "." else 0
     except:
         return 0
 
-# --- Excel & PDF extraction ---
+# --- Excel & PDF Parsing ---
 def extract_from_excel(uploaded_file):
     try:
         wb = load_workbook(uploaded_file, data_only=True)
@@ -215,17 +172,15 @@ def extract_from_excel(uploaded_file):
         for row in ws.iter_rows(values_only=True):
             row_text = [str(x).strip().lower() if x else "" for x in row]
             if "gross area (sqft)" in " ".join(row_text):
-                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
+                gross_area = next((x for x in row if isinstance(x,(int,float))),0)
             if "market rent value" in " ".join(row_text):
-                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
+                market_rent = next((x for x in row if isinstance(x,(int,float))),0)
             if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
-                cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
-
+                cashflow = next((x for x in row if isinstance(x,(int,float))),0)
         net_internal_area = gross_area * 0.5 if gross_area else 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
+        monthly_cashflow = cashflow/12 if cashflow else 0
         return currency, gross_area or 0, net_internal_area, market_rent or 0, monthly_cashflow or 0
-    except Exception as e:
-        st.warning(f"Could not parse Excel model: {e}")
+    except:
         return None
 
 def extract_from_pdf(uploaded_file):
@@ -237,42 +192,17 @@ def extract_from_pdf(uploaded_file):
                 if page_text:
                     text += page_text + "\n"
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
-
-        rentable_area_match = re.search(r"Rentable Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
-        total_area_contracted_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
-        gross_area_match = re.search(r"Gross Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
-
-        total_area = None
-        for match in [total_area_contracted_match, rentable_area_match, gross_area_match]:
-            if match:
-                total_area = safe_to_float(match.group(1))
-                break
-        if total_area is None:
-            total_area = 0
-
-        sellable_area_match = re.search(r"Sellable Office Area.*?sqft.*?([\d,\.]+)", text, re.IGNORECASE)
-        net_internal_area = safe_to_float(sellable_area_match.group(1)) if sellable_area_match else total_area * 0.5
-
-        market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
-        headline_rent_match = re.search(r"Headline Rent \(as reviewed by partner\).*?([\d,\.]+)", text, re.IGNORECASE)
-        market_rent = None
-        for match in [market_rent_match, headline_rent_match]:
-            if match:
-                market_rent = safe_to_float(match.group(1))
-                break
-        if market_rent is None:
-            market_rent = 0
-
-        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
-        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
-
+        # Area and rent patterns
+        total_area = safe_to_float((re.search(r"(Rentable Area|Total Area Contracted).*?([\d,\.]+)", text, re.IGNORECASE) or [0,0])[2])
+        net_internal_area = safe_to_float((re.search(r"Sellable Office Area.*?([\d,\.]+)", text, re.IGNORECASE) or [0,0])[1]) or total_area*0.5
+        market_rent = safe_to_float((re.search(r"(Market Rent Value|Headline Rent).*?([\d,\.]+)", text, re.IGNORECASE) or [0,0])[2])
+        cashflow = safe_to_float((re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE) or [0,0])[1])
+        monthly_cashflow = cashflow/12 if cashflow else 0
         return currency, total_area, net_internal_area, market_rent, monthly_cashflow
-    except Exception as e:
-        st.warning(f"Could not parse PDF model: {e}")
+    except:
         return None
 
-# --- Pricing Template Filler ---
+# --- Fill Excel Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, net_internal_area,
                           monthly_rent, rent_source,
@@ -285,10 +215,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     if not os.path.exists(template_path):
         st.error(f"Template file not found: {template_path}")
         return None
-
     wb = load_workbook(template_path)
     ws = wb['Centre & Market Details']
-
     ws['C2'] = centre_num
     ws['C3'] = centre_address
     ws['D5'] = currency
@@ -318,3 +246,83 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
     wb.save(temp_file.name)
     return temp_file.name
+
+# --- Streamlit UI ---
+st.title("Pricing Template 2025 Filler")
+uploaded_model = st.file_uploader("Upload Financial Model (PDF or Excel)", type=["pdf","xlsx","xls"])
+currency = None; total_area=0; net_internal_area=0; monthly_rent=0; total_cash_flow=0
+
+if uploaded_model:
+    parsed = extract_from_pdf(uploaded_model) if uploaded_model.name.endswith(".pdf") else extract_from_excel(uploaded_model)
+    if parsed:
+        currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
+        st.success("Values auto-extracted from model.")
+    else:
+        st.warning("Could not extract values. Enter manually.")
+        currency = st.selectbox("Pricing Currency", ["USD","CAD"])
+        total_area = st.number_input("Total Area Contracted", value=0.0)
+        net_internal_area = st.number_input("Net Internal Area", value=0.0)
+        monthly_rent = st.number_input("Monthly Market Rent", value=0.0)
+        total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", value=0.0)
+else:
+    currency = st.selectbox("Pricing Currency", ["USD","CAD"])
+    total_area = st.number_input("Total Area Contracted", value=0.0)
+    net_internal_area = st.number_input("Net Internal Area", value=0.0)
+    monthly_rent = st.number_input("Monthly Market Rent", value=0.0)
+    total_cash_flow = st.number_input("Total Monthly Expected Cash Flow Maturity", value=0.0)
+
+centre_num = st.text_input("Centre #")
+centre_address = st.text_input("Centre Address")
+area_units = st.selectbox("Area Units", ["SqM","SqFt"])
+rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided","Broker Provided or Market Report","Benchmarked from similar centre"])
+service_charges = st.number_input("Service Charges", value=0.0)
+property_tax = st.number_input("Property Tax", value=0.0)
+monthly_rent_override = st.number_input("Override Monthly Market Rent", value=float(monthly_rent))
+
+if centre_address:
+    user_coords = get_coords(centre_address)
+    if user_coords:
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
+        st.markdown("### Closest Comps")
+        st.write(f"**Comp #1:** {comp_centres[0]} — {comp_distances[0]} — Quality: {quality1} — {diff1_str}")
+        if comp_centres[1]: st.write(f"**Comp #2:** {comp_centres[1]} — {comp_distances[1]} — Quality: {quality2} — {diff2_str}")
+
+        coworking_spaces = find_online_coworking_osm(user_coords)
+        coworking_names = [c[0] for c in coworking_spaces]
+        coworking_distances = [f"{c[1]} mi" for c in coworking_spaces]
+        coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units) if len(coworking_spaces)>0 else None
+        coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units) if len(coworking_spaces)>1 else None
+
+        st.markdown("### Nearby Coworking Spaces")
+        for i, (name, dist) in enumerate(zip(coworking_names,coworking_distances)):
+            price = coworking_price1 if i==0 else coworking_price2 if i==1 else None
+            price_str = f"${price}" if price else "N/A"
+            st.write(f"**{name}** — {dist} — Estimated Price: {price_str}")
+    else: st.warning("Could not geocode address. Enter valid address.")
+
+if st.button("Generate Pricing Template"):
+    if not centre_num or not centre_address:
+        st.error("Please enter Centre # and Centre Address")
+    else:
+        final_monthly_rent = monthly_rent_override if monthly_rent_override>0 else float(monthly_rent)
+        file_path = fill_pricing_template("Pricing_Template_2025.xlsx", centre_num, centre_address, currency,
+                                          area_units, total_area, net_internal_area,
+                                          final_monthly_rent, rent_source,
+                                          service_charges, property_tax,
+                                          comp_centres if centre_address else ["",""],
+                                          comp_distances if centre_address else ["",""],
+                                          quality1 if centre_address else "",
+                                          quality2 if centre_address else "",
+                                          diff1_str if centre_address else "",
+                                          diff2_str if centre_address else "",
+                                          coworking_names if centre_address else ["",""],
+                                          coworking_distances if centre_address else ["",""],
+                                          coworking_price1 if centre_address else None,
+                                          coworking_price2 if centre_address else None,
+                                          total_cash_flow)
+        if file_path:
+            with open(file_path,"rb") as f:
+                st.download_button("Download Filled Pricing Template", f,
+                                   "Pricing_Template_Filled_2025.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            os.unlink(file_path)
