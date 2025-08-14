@@ -148,9 +148,8 @@ def extract_from_excel(uploaded_file):
             if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
                 cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
         total_area = gross_area or 0
-        net_internal_area = total_area * 0.5
         monthly_cashflow = cashflow / 12 if cashflow else 0
-        return currency, total_area, net_internal_area, market_rent or 0, monthly_cashflow or 0
+        return currency, total_area, market_rent or 0, monthly_cashflow or 0
     except Exception as e:
         st.warning(f"Could not parse Excel model: {e}")
         return None
@@ -166,13 +165,12 @@ def extract_from_pdf(uploaded_file):
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
         total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
         total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
-        net_internal_area = total_area * 0.5
         market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
         market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
         cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
         cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0.0
         monthly_cashflow = cashflow / 12 if cashflow else 0.0
-        return currency, total_area, net_internal_area, market_rent, monthly_cashflow
+        return currency, total_area, market_rent, monthly_cashflow
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
         return None
@@ -234,7 +232,7 @@ if uploaded_model:
     else:
         parsed = extract_from_excel(uploaded_model)
     if parsed:
-        currency, total_area, net_internal_area, monthly_rent, total_cash_flow = parsed
+        currency, total_area, monthly_rent, total_cash_flow = parsed
         st.success("Values auto-extracted from model.")
     else:
         currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
@@ -247,6 +245,13 @@ area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
 rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
+
+# --- Total Area Input ---
+total_area_input = st.number_input(
+    "Total Area Contracted", 
+    value=float(total_area) if total_area else 0.0, 
+    min_value=0.0
+)
 
 monthly_rent_override = st.number_input(
     "Override Monthly Market Rent", 
@@ -283,7 +288,7 @@ if st.button("Generate Pricing Template"):
             centre_address,
             currency,
             area_units,
-            total_area,
+            total_area_input,
             monthly_rent_override,
             rent_source,
             service_charges,
