@@ -76,7 +76,7 @@ def find_closest_comps(user_coords):
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append("")
-    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, comps5.iloc[0]['Price']
+    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
@@ -104,7 +104,6 @@ def find_online_coworking_osm(user_coords):
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
-        # keep closest unique spaces
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
@@ -119,14 +118,13 @@ def find_online_coworking_osm(user_coords):
         radius += step
     if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0, None, None)]
-    # return first two closest, skipping unavailable if needed
     return coworking_spaces[:2]
 
 def safe_to_float(val):
     try:
-        return float(val.replace(",", "")) if val and val != "." else 0
+        return float(val.replace(",", "")) if val and val != "." else 0.0
     except:
-        return 0
+        return 0.0
 
 def extract_from_excel(uploaded_file):
     try:
@@ -160,14 +158,14 @@ def extract_from_pdf(uploaded_file):
                     text += page_text + "\n"
         currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
         total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
-        total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0
+        total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
         sellable_area_match = re.search(r"Sellable Office Area.*?([\d,\.]+)", text, re.IGNORECASE)
         net_internal_area = safe_to_float(sellable_area_match.group(1)) if sellable_area_match else total_area * 0.5
         market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
-        market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0
+        market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
         cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
-        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
+        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0.0
+        monthly_cashflow = cashflow / 12 if cashflow else 0.0
         return currency, total_area, net_internal_area, market_rent, monthly_cashflow
     except Exception as e:
         st.warning(f"Could not parse PDF model: {e}")
@@ -248,10 +246,24 @@ rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
-# Overrides for Total Area & Net Internal Area
-total_area_override = st.number_input("Override Total Area Contracted", value=total_area, min_value=0.0)
-net_internal_area_override = st.number_input("Override Net Internal Area", value=net_internal_area, min_value=0.0)
-monthly_rent_override = st.number_input("Override Monthly Market Rent", value=float(monthly_rent), min_value=0.0)
+# --- Overrides for Total Area & Net Internal Area ---
+total_area_override = st.number_input(
+    "Override Total Area Contracted", 
+    value=float(total_area) if total_area else 0.0, 
+    min_value=0.0
+)
+
+net_internal_area_override = st.number_input(
+    "Override Net Internal Area", 
+    value=float(net_internal_area) if net_internal_area else 0.0, 
+    min_value=0.0
+)
+
+monthly_rent_override = st.number_input(
+    "Override Monthly Market Rent", 
+    value=float(monthly_rent) if monthly_rent else 0.0, 
+    min_value=0.0
+)
 
 market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
 
