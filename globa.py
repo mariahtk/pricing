@@ -211,8 +211,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     
     # Get actual value from D10 and multiply by 30
     d10_value = ws['D10'].value or 0
-    ws['D33'] = d10_value * 30
-    ws['E33'] = d10_value * 30
+    ws['D33'] = d10_value * 80
+    ws['E33'] = d10_value * 80
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
