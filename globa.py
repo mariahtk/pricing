@@ -208,9 +208,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     
-    # D33 and E33: market price * 150 sqft, capped at 2000
-    ws['D33'] = min(market_price * 150, 2000) if market_price else 0
-    ws['E33'] = min(market_price * 150, 2000) if market_price else 0
+    # --- UPDATED: D33 and E33 as market price * 30 ---
+    ws['D33'] = min(market_price * 30, 2000) if market_price else 0
+    ws['E33'] = min(market_price * 30, 2000) if market_price else 0
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
