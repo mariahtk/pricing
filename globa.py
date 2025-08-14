@@ -96,7 +96,7 @@ def find_online_coworking_osm(user_coords):
         try:
             data = response.json()
         except:
-            break  # if invalid JSON, exit
+            break
         new_spaces = []
         for element in data.get('elements', []):
             name = element['tags'].get('name')
@@ -120,28 +120,6 @@ def find_online_coworking_osm(user_coords):
     if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0, None, None)]
     return coworking_spaces[:2]
-
-city_rent_lookup_sqft = {
-    "New York": 70, "San Francisco": 65, "Chicago": 40, "Los Angeles": 45,
-    "Seattle": 50, "Boston": 55, "Austin": 35, "Denver": 30, "Miami": 30,
-    "Washington": 50, "Atlanta": 28, "Dallas": 32, "Houston": 28,
-    "Toronto": 50, "Vancouver": 45, "Montreal": 35, "Calgary": 30,
-    "Ottawa": 32, "Edmonton": 28, "Winnipeg": 25, "Quebec": 25,
-}
-city_rent_lookup_sqm = {city: val * 10.7639 for city, val in city_rent_lookup_sqft.items()}
-
-def get_city_from_coords(lat, lon):
-    location = geolocator.reverse((lat, lon), exactly_one=True)
-    if location:
-        addr = location.raw.get('address', {})
-        city = (addr.get('city') or addr.get('town') or addr.get('municipality') or
-                addr.get('village') or addr.get('hamlet'))
-        if city:
-            return city
-        state = addr.get('state')
-        if state:
-            return state
-    return None
 
 def estimate_coworking_price(lat, lon, area_units):
     base_price = 300 if area_units.lower() in ["sqm", "m2"] else 28
@@ -235,8 +213,11 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
-    ws['D33'] = min(coworking_price1, 2000) if coworking_price1 is not None else ""
-    ws['E33'] = min(coworking_price2, 2000) if coworking_price2 is not None else ""
+    
+    # Multiply coworking price by 250 (average 2-window office sqft) and cap at 2000
+    ws['D33'] = min((coworking_price1 * 250) if coworking_price1 is not None else 0, 2000)
+    ws['E33'] = min((coworking_price2 * 250) if coworking_price2 is not None else 0, 2000)
+    
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp_file.name)
@@ -271,8 +252,6 @@ rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 monthly_rent_override = st.number_input("Override Monthly Market Rent", value=float(monthly_rent), min_value=0.0, format="%.2f")
-total_area_override = st.number_input("Override Total Area Contracted (SqFt)", value=float(total_area), min_value=0.0, format="%.2f")
-net_internal_area_override = st.number_input("Override Net Internal Area (SqFt)", value=float(net_internal_area), min_value=0.0, format="%.2f")
 
 if centre_address:
     user_coords = get_coords(centre_address)
@@ -287,13 +266,10 @@ if centre_address:
         coworking_distances = [f"{c[1]} mi" for c in coworking_spaces]
         coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units) if len(coworking_spaces) > 0 else None
         coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units) if len(coworking_spaces) > 1 else None
-        # --- cap max price 2000 ---
-        coworking_price1 = min(coworking_price1, 2000) if coworking_price1 is not None else None
-        coworking_price2 = min(coworking_price2, 2000) if coworking_price2 is not None else None
         st.markdown("### Nearby Coworking Spaces")
         for i, (name, dist) in enumerate(zip(coworking_names, coworking_distances)):
             price = coworking_price1 if i == 0 else coworking_price2 if i == 1 else None
-            price_str = f"${price}" if price else "N/A"
+            price_str = f"${min(price*250, 2000)}" if price else "N/A"
             st.write(f"**{name}** — {dist} — Estimated Price: {price_str}")
     else:
         st.warning("Could not geocode the given address. Please enter a valid address to see comps and coworking info.")
@@ -303,11 +279,9 @@ if st.button("Generate Pricing Template"):
         st.error("Please enter Centre # and Centre Address")
     else:
         final_monthly_rent = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
-        final_total_area = total_area_override if total_area_override > 0 else total_area
-        final_net_internal_area = net_internal_area_override if net_internal_area_override > 0 else net_internal_area
         file_path = fill_pricing_template(
             "Pricing Template 2025.xlsx", centre_num, centre_address, currency,
-            area_units, final_total_area, final_net_internal_area,
+            area_units, total_area, net_internal_area,
             final_monthly_rent, rent_source,
             service_charges, property_tax,
             comp_centres if centre_address else ["", ""],
