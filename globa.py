@@ -249,6 +249,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
+
+
 uploaded_model = st.file_uploader("Upload Financial Model (PDF or Excel)", type=["pdf","xlsx","xls"])
 currency = None; total_area=0; net_internal_area=0; monthly_rent=0; total_cash_flow=0
 
@@ -305,7 +307,7 @@ if st.button("Generate Pricing Template"):
         st.error("Please enter Centre # and Centre Address")
     else:
         final_monthly_rent = monthly_rent_override if monthly_rent_override>0 else float(monthly_rent)
-        file_path = fill_pricing_template("Pricing_Template_2025.xlsx", centre_num, centre_address, currency,
+        file_path = fill_pricing_template("Pricing Template 2025.xlsx", centre_num, centre_address, currency,
                                           area_units, total_area, net_internal_area,
                                           final_monthly_rent, rent_source,
                                           service_charges, property_tax,
