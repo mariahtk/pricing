@@ -8,7 +8,6 @@ import tempfile
 import pdfplumber
 import re
 import os
-import math
 
 # --- Hide Streamlit Branding and Toolbar ---
 hide_streamlit_style = """
@@ -77,7 +76,7 @@ def find_closest_comps(user_coords):
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append("")
-    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
+    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, comps5.iloc[0]['Price']
 
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
@@ -105,6 +104,7 @@ def find_online_coworking_osm(user_coords):
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
+        # keep closest unique spaces
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
@@ -119,12 +119,8 @@ def find_online_coworking_osm(user_coords):
         radius += step
     if len(coworking_spaces) == 0:
         coworking_spaces = [("No coworking space found nearby", 0, None, None)]
+    # return first two closest, skipping unavailable if needed
     return coworking_spaces[:2]
-
-def estimate_coworking_price(lat, lon, area_units):
-    base_price = 300 if area_units.lower() in ["sqm", "m2"] else 28
-    factor = 1.0
-    return round(base_price * factor, 2)
 
 def safe_to_float(val):
     try:
@@ -184,7 +180,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
                           coworking_names, coworking_distances,
-                          coworking_price1, coworking_price2,
+                          market_price,
                           total_cash_flow):
     if not os.path.exists(template_path):
         st.error(f"Template file not found: {template_path}")
@@ -214,9 +210,9 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     
-    # Multiply coworking price by 250 (average 2-window office sqft) and cap at 2000
-    ws['D33'] = min((coworking_price1 * 250) if coworking_price1 is not None else 0, 2000)
-    ws['E33'] = min((coworking_price2 * 250) if coworking_price2 is not None else 0, 2000)
+    # D33 and E33: market price * 150 sqft, capped at 2000
+    ws['D33'] = min(market_price * 150, 2000) if market_price else 0
+    ws['E33'] = min(market_price * 150, 2000) if market_price else 0
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
@@ -251,12 +247,18 @@ area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
 rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
-monthly_rent_override = st.number_input("Override Monthly Market Rent", value=float(monthly_rent), min_value=0.0, format="%.2f")
+
+# Overrides for Total Area & Net Internal Area
+total_area_override = st.number_input("Override Total Area Contracted", value=total_area, min_value=0.0)
+net_internal_area_override = st.number_input("Override Net Internal Area", value=net_internal_area, min_value=0.0)
+monthly_rent_override = st.number_input("Override Monthly Market Rent", value=float(monthly_rent), min_value=0.0)
+
+market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
 
 if centre_address:
     user_coords = get_coords(centre_address)
     if user_coords:
-        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, market_price = find_closest_comps(user_coords)
         st.markdown("### Closest Comps")
         st.write(f"**Comp #1:** {comp_centres[0]} — {comp_distances[0]} — Quality: {quality1} — {diff1_str}")
         if comp_centres[1]:
@@ -264,13 +266,9 @@ if centre_address:
         coworking_spaces = find_online_coworking_osm(user_coords)
         coworking_names = [c[0] for c in coworking_spaces]
         coworking_distances = [f"{c[1]} mi" for c in coworking_spaces]
-        coworking_price1 = estimate_coworking_price(coworking_spaces[0][2], coworking_spaces[0][3], area_units) if len(coworking_spaces) > 0 else None
-        coworking_price2 = estimate_coworking_price(coworking_spaces[1][2], coworking_spaces[1][3], area_units) if len(coworking_spaces) > 1 else None
         st.markdown("### Nearby Coworking Spaces")
-        for i, (name, dist) in enumerate(zip(coworking_names, coworking_distances)):
-            price = coworking_price1 if i == 0 else coworking_price2 if i == 1 else None
-            price_str = f"${min(price*250, 2000)}" if price else "N/A"
-            st.write(f"**{name}** — {dist} — Estimated Price: {price_str}")
+        for name, dist in zip(coworking_names, coworking_distances):
+            st.write(f"**{name}** — {dist}")
     else:
         st.warning("Could not geocode the given address. Please enter a valid address to see comps and coworking info.")
 
@@ -278,12 +276,18 @@ if st.button("Generate Pricing Template"):
     if not centre_num or not centre_address:
         st.error("Please enter Centre # and Centre Address")
     else:
-        final_monthly_rent = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
         file_path = fill_pricing_template(
-            "Pricing Template 2025.xlsx", centre_num, centre_address, currency,
-            area_units, total_area, net_internal_area,
-            final_monthly_rent, rent_source,
-            service_charges, property_tax,
+            "Pricing Template 2025.xlsx",
+            centre_num,
+            centre_address,
+            currency,
+            area_units,
+            total_area_override,
+            net_internal_area_override,
+            monthly_rent_override,
+            rent_source,
+            service_charges,
+            property_tax,
             comp_centres if centre_address else ["", ""],
             comp_distances if centre_address else ["", ""],
             quality1 if centre_address else "",
@@ -292,8 +296,7 @@ if st.button("Generate Pricing Template"):
             diff2_str if centre_address else "",
             coworking_names if centre_address else ["", ""],
             coworking_distances if centre_address else ["", ""],
-            coworking_price1 if centre_address else None,
-            coworking_price2 if centre_address else None,
+            market_price,
             total_cash_flow
         )
         if file_path:
