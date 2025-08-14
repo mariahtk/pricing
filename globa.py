@@ -22,7 +22,7 @@ st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # --- Load global pricing data ---
 usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
 canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
-market_rent_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Market Rent")  # single sheet
+market_rent_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Market Rent")
 
 def clean_columns(df):
     df.columns = df.columns.str.strip().str.replace('\n', '').str.replace('\r', '')
@@ -30,9 +30,9 @@ def clean_columns(df):
 
 usa_data = clean_columns(usa_data)
 canada_data = clean_columns(canada_data)
+market_rent_data = clean_columns(market_rent_data)
 all_data = pd.concat([usa_data, canada_data], ignore_index=True)
 all_data = clean_columns(all_data)
-market_rent_data = clean_columns(market_rent_data)
 
 # --- Geolocator ---
 geolocator = Nominatim(user_agent="pricing_app")
@@ -78,28 +78,27 @@ def find_closest_comps(user_coords):
     while len(comp_centres) < 2:
         comp_centres.append("")
         comp_distances.append("")
-    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str
+    return comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, avg_price
 
 def get_avg_market_rent(comp_centres):
-    """Take centre #s and find average Market Rent from Market Rent sheet."""
+    """Take centre #s and find average Market Rate from Market Rent sheet."""
     rents = []
     for centre in comp_centres:
         if centre:  # only consider non-empty centre numbers
             matched = market_rent_data[market_rent_data['Centre #'] == centre]
-            if not matched.empty:
-                rents.extend(matched['Market Rent'].tolist())
+            if not matched.empty and 'Market Rate' in matched.columns:
+                rents.extend(matched['Market Rate'].tolist())
     if rents:
         return sum(rents) / len(rents)
     return 0.0
 
-# --- Coworking extraction ---
 def find_online_coworking_osm(user_coords):
     lat, lon = user_coords
     overpass_url = "http://overpass-api.de/api/interpreter"
     radius = 10000
     step = 10000
     coworking_spaces = []
-
+    
     while True:
         query = f"""
         [out:json];
@@ -120,35 +119,34 @@ def find_online_coworking_osm(user_coords):
                 c_lon = element['lon']
                 dist = round(geodesic(user_coords, (c_lat, c_lon)).miles, 2)
                 new_spaces.append((name, dist, c_lat, c_lon))
-
+        
         all_spaces = coworking_spaces + new_spaces
         unique_spaces = {}
         for name, dist, c_lat, c_lon in all_spaces:
             if name not in unique_spaces or dist < unique_spaces[name][0]:
                 unique_spaces[name] = (dist, c_lat, c_lon)
-
+        
         coworking_spaces = sorted(
             [(name, val[0], val[1], val[2]) for name, val in unique_spaces.items()],
             key=lambda x: x[1]
         )
-
+        
         if len(coworking_spaces) >= 2:
             break
         radius += step
 
     while len(coworking_spaces) < 2:
         coworking_spaces.append(("No coworking space found", 0, None, None))
-
+        
     return coworking_spaces[:2]
 
-# --- Safe float ---
 def safe_to_float(val):
     try:
         return float(val.replace(",", "")) if val and val != "." else 0.0
     except:
         return 0.0
 
-# --- Extract Excel/PDF ---
+# --- Extract Excel Data ---
 def extract_from_excel(uploaded_file):
     try:
         wb = load_workbook(uploaded_file, data_only=True)
@@ -171,6 +169,7 @@ def extract_from_excel(uploaded_file):
         st.warning(f"Could not parse Excel model: {e}")
         return None
 
+# --- Extract PDF Data ---
 def extract_from_pdf(uploaded_file):
     try:
         text = ""
@@ -193,6 +192,7 @@ def extract_from_pdf(uploaded_file):
         return None
 
 def extract_gross_area_from_pdf(uploaded_file):
+    """Extract first number after 'Gross Area sqft' or 'Gross Area sq ft'."""
     try:
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
@@ -210,7 +210,8 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, monthly_rent, rent_source,
                           service_charges, property_tax, comp_centres, comp_distances,
                           quality1, quality2, diff1_str, diff2_str,
-                          coworking_names, coworking_distances, total_cash_flow):
+                          coworking_names, coworking_distances, market_price,
+                          total_cash_flow):
     if not os.path.exists(template_path):
         st.error(f"Template file not found: {template_path}")
         return None
@@ -294,10 +295,12 @@ monthly_rent_override = st.number_input(
     min_value=0.0
 )
 
+market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
+
 if centre_address:
     user_coords = get_coords(centre_address)
     if user_coords:
-        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = find_closest_comps(user_coords)
+        comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, _ = find_closest_comps(user_coords)
         market_price = get_avg_market_rent(comp_centres)  # <-- average from Market Rent tab
         st.markdown("### Closest Comps")
         st.write(f"**Comp #1:** {comp_centres[0]} — {comp_distances[0]} — Quality: {quality1} — {diff1_str}")
@@ -311,9 +314,6 @@ if centre_address:
             st.write(f"**{name}** — {dist}")
     else:
         st.warning("Could not geocode the given address. Please enter a valid address to see comps and coworking info.")
-else:
-    comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str = ["", ""], ["", ""], "", "", "", ""
-    coworking_names, coworking_distances = ["", ""], ["", ""]
 
 if st.button("Generate Pricing Template"):
     if not centre_num or not centre_address:
@@ -330,16 +330,22 @@ if st.button("Generate Pricing Template"):
             rent_source,
             service_charges,
             property_tax,
-            comp_centres,
-            comp_distances,
-            quality1,
-            quality2,
-            diff1_str,
-            diff2_str,
-            coworking_names,
-            coworking_distances,
+            comp_centres if centre_address else ["", ""],
+            comp_distances if centre_address else ["", ""],
+            quality1 if centre_address else "",
+            quality2 if centre_address else "",
+            diff1_str if centre_address else "",
+            diff2_str if centre_address else "",
+            coworking_names if centre_address else ["", ""],
+            coworking_distances if centre_address else ["", ""],
+            market_price,
             total_cash_flow
         )
         if file_path:
-            st.success("Pricing template generated successfully!")
-            st.download_button("Download Filled Template", data=open(file_path, "rb"), file_name="Filled_Pricing_Template.xlsx")
+            with open(file_path, "rb") as f:
+                st.download_button(
+                    label="Download Filled Pricing Template",
+                    data=f,
+                    file_name=f"{centre_num}_Pricing_Template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
