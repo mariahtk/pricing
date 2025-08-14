@@ -132,6 +132,7 @@ def safe_to_float(val):
     except:
         return 0.0
 
+# --- Extract Excel Data ---
 def extract_from_excel(uploaded_file):
     try:
         wb = load_workbook(uploaded_file, data_only=True)
@@ -154,6 +155,7 @@ def extract_from_excel(uploaded_file):
         st.warning(f"Could not parse Excel model: {e}")
         return None
 
+# --- Extract PDF Data ---
 def extract_from_pdf(uploaded_file):
     try:
         text = ""
@@ -175,6 +177,21 @@ def extract_from_pdf(uploaded_file):
         st.warning(f"Could not parse PDF model: {e}")
         return None
 
+def extract_gross_area_from_pdf(uploaded_file):
+    """Extract first number after 'Gross Area sqft' or 'Gross Area sq ft'."""
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    match = re.search(r'Gross\s+Area\s+sq\s?ft\s*[:\s]\s*([\d,]+)', text, re.IGNORECASE)
+                    if match:
+                        return float(match.group(1).replace(',', ''))
+    except Exception as e:
+        st.warning(f"Error reading PDF for Gross Area: {e}")
+    return None
+
+# --- Fill Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, monthly_rent, rent_source,
                           service_charges, property_tax, comp_centres, comp_distances,
@@ -191,7 +208,7 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D5'] = currency
     ws['D6'] = area_units
     ws['D7'] = total_area
-    ws['D8'] = total_area * 0.5  # Net Internal Area calculated
+    ws['D8'] = total_area * 0.5  # Net Internal Area
     ws['D10'] = monthly_rent
     ws['D11'] = rent_source
     ws['D12'] = service_charges
@@ -209,10 +226,10 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
     
-    # Get actual value from D10 and multiply by 30
+    # D33/E33 = D10 * 30
     d10_value = ws['D10'].value or 0
-    ws['D33'] = d10_value * 80
-    ws['E33'] = d10_value * 80
+    ws['D33'] = d10_value * 30
+    ws['E33'] = d10_value * 30
     
     ws['D35'] = total_cash_flow
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
@@ -230,10 +247,14 @@ total_cash_flow = 0.0
 if uploaded_model:
     if uploaded_model.name.endswith(".pdf"):
         parsed = extract_from_pdf(uploaded_model)
+        pdf_gross_area = extract_gross_area_from_pdf(uploaded_model)
+        if pdf_gross_area:
+            total_area = pdf_gross_area
     else:
         parsed = extract_from_excel(uploaded_model)
     if parsed:
-        currency, total_area, monthly_rent, total_cash_flow = parsed
+        currency, total_area_parsed, monthly_rent, total_cash_flow = parsed
+        total_area = total_area if total_area else total_area_parsed
         st.success("Values auto-extracted from model.")
     else:
         currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
