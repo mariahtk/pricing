@@ -19,6 +19,24 @@ hide_streamlit_style = """
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
+# --- IWG Login ---
+st.sidebar.header("IWG Login")
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+login_success = False
+
+if st.sidebar.button("Login"):
+    # Replace the following with your actual login verification logic
+    if username == "iwguser" and password == "iwgpass":
+        st.sidebar.success("Login successful")
+        login_success = True
+    else:
+        st.sidebar.error("Invalid credentials")
+
+if not login_success:
+    st.warning("Please login to access the Pricing Template Filler.")
+    st.stop()  # Stop execution until login is successful
+
 # --- Logo ---
 st.image("IWG Logo (1).jpg", width=200)
 
