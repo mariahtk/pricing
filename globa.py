@@ -48,23 +48,9 @@ all_data = clean_columns(all_data)
 # --- Geolocator ---
 geolocator = Nominatim(user_agent="pricing_app")
 
-@st.cache_data
-def get_coords_cached(address):
-    """Geocode address with caching and error handling."""
-    try:
-        location = geolocator.geocode(address, timeout=10)
-        if location:
-            return (location.latitude, location.longitude)
-        else:
-            return None
-    except GeocoderUnavailable:
-        return None
-
 def get_coords(address):
-    coords = get_coords_cached(address)
-    if not coords:
-        st.warning("Geocoding service unavailable or address not found. You can enter coordinates manually below.")
-    return coords
+    location = geolocator.geocode(address)
+    return (location.latitude, location.longitude) if location else None
 
 def format_diff(value):
     if value > 0:
@@ -193,6 +179,41 @@ def extract_from_excel(uploaded_file):
         st.warning(f"Could not parse Excel model: {e}")
         return None
 
+# --- Extract PDF Data ---
+def extract_from_pdf(uploaded_file):
+    try:
+        text = ""
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+        total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
+        total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
+        market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
+        market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
+        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0.0
+        monthly_cashflow = cashflow / 12 if cashflow else 0.0
+        return currency, total_area, market_rent, monthly_cashflow
+    except Exception as e:
+        st.warning(f"Could not parse PDF model: {e}")
+        return None
+
+def extract_gross_area_from_pdf(uploaded_file):
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    match = re.search(r'Gross\s+Area\s+sq\s?ft\s*[:\s]\s*([\d,]+)', text, re.IGNORECASE)
+                    if match:
+                        return float(match.group(1).replace(',', ''))
+    except Exception as e:
+        st.warning(f"Error reading PDF for Gross Area: {e}")
+    return None
+
 # --- Fill Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, monthly_rent, rent_source,
@@ -227,7 +248,6 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
     ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
     ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
     ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
-    
     d10_value = ws['D10'].value or 0
     ws['D33'] = d10_value * 30
     ws['E33'] = d10_value * 30
@@ -238,14 +258,20 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
-uploaded_model = st.file_uploader("Upload Financial Model (XLSX)", type=["xlsx", "xls"])
+uploaded_model = st.file_uploader("Upload Financial Model (PDF/XLSX)", type=["xlsx", "xls", "pdf"])
 currency = None
 total_area = 0.0
 monthly_rent = 0.0
 total_cash_flow = 0.0
 
 if uploaded_model:
-    parsed = extract_from_excel(uploaded_model)
+    if uploaded_model.name.endswith(".pdf"):
+        parsed = extract_from_pdf(uploaded_model)
+        pdf_gross_area = extract_gross_area_from_pdf(uploaded_model)
+        if pdf_gross_area:
+            total_area = pdf_gross_area
+    else:
+        parsed = extract_from_excel(uploaded_model)
     if parsed:
         currency, total_area_parsed, monthly_rent, total_cash_flow = parsed
         total_area = total_area if total_area else total_area_parsed
@@ -262,7 +288,6 @@ rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
-# --- Total Area Input ---
 total_area_input = st.number_input(
     "Total Area Contracted", 
     value=float(total_area) if total_area else 0.0, 
@@ -279,12 +304,6 @@ market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_r
 
 if centre_address:
     user_coords = get_coords(centre_address)
-    if not user_coords:
-        # Allow manual entry
-        lat = st.number_input("Latitude", value=0.0)
-        lon = st.number_input("Longitude", value=0.0)
-        user_coords = (lat, lon) if lat != 0.0 and lon != 0.0 else None
-
     if user_coords:
         comp_centres, comp_distances, quality1, quality2, diff1_str, diff2_str, _ = find_closest_comps(user_coords)
         market_price = get_avg_market_rent(comp_centres)
@@ -299,7 +318,7 @@ if centre_address:
         for name, dist in zip(coworking_names, coworking_distances):
             st.write(f"**{name}** — {dist}")
     else:
-        st.warning("No valid coordinates provided. Cannot display comps or coworking info.")
+        st.warning("Could not geocode the given address. Please enter a valid address to see comps and coworking info.")
 
 if st.button("Generate Pricing Template"):
     if not centre_num or not centre_address:
