@@ -164,123 +164,23 @@ def find_online_coworking_osm(user_coords):
         
     return coworking_spaces[:2]
 
-def safe_to_float(val):
-    try:
-        return float(val.replace(",", "")) if val and val != "." else 0.0
-    except:
-        return 0.0
-
-# --- Extract Excel Data ---
-def extract_from_excel(uploaded_file):
-    try:
-        wb = load_workbook(uploaded_file, data_only=True)
-        ws = wb["10Yr Model"] if "10Yr Model" in wb.sheetnames else wb.active
-        text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
-        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
-        gross_area = market_rent = cashflow = None
-        for row in ws.iter_rows(values_only=True):
-            row_text = [str(x).strip().lower() if x else "" for x in row]
-            if "gross area (sqft)" in " ".join(row_text):
-                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
-            if "market rent value" in " ".join(row_text):
-                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
-            if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
-                cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
-        total_area = gross_area or 0
-        monthly_cashflow = cashflow / 12 if cashflow else 0
-        return currency, total_area, market_rent or 0, monthly_cashflow or 0
-    except Exception as e:
-        st.warning(f"Could not parse Excel model: {e}")
-        return None
-
-# --- Fill Template ---
-def fill_pricing_template(template_path, centre_num, centre_address, currency,
-                          area_units, total_area, monthly_rent, rent_source,
-                          service_charges, property_tax, comp_centres, comp_distances,
-                          quality1, quality2, diff1_str, diff2_str,
-                          coworking_names, coworking_distances, market_price,
-                          total_cash_flow):
-    if not os.path.exists(template_path):
-        st.error(f"Template file not found: {template_path}")
-        return None
-    wb = load_workbook(template_path)
-    ws = wb['Centre & Market Details']
-    ws['C2'] = centre_num
-    ws['C3'] = centre_address
-    ws['D5'] = currency
-    ws['D6'] = area_units
-    ws['D7'] = total_area
-    ws['D8'] = total_area * 0.5
-    ws['D10'] = monthly_rent
-    ws['D11'] = rent_source
-    ws['D12'] = service_charges
-    ws['D13'] = property_tax
-    ws['D17'] = comp_centres[0]
-    ws['E17'] = comp_centres[1]
-    ws['D18'] = comp_distances[0]
-    ws['E18'] = comp_distances[1]
-    ws['D19'] = quality1
-    ws['E19'] = quality2
-    ws['D20'] = diff1_str
-    ws['E20'] = diff2_str
-    ws['D30'] = coworking_names[0] if len(coworking_names) > 0 else ""
-    ws['E30'] = coworking_names[1] if len(coworking_names) > 1 else ""
-    ws['D31'] = coworking_distances[0] if len(coworking_distances) > 0 else ""
-    ws['E31'] = coworking_distances[1] if len(coworking_distances) > 1 else ""
-    
-    d10_value = ws['D10'].value or 0
-    ws['D33'] = d10_value * 30
-    ws['E33'] = d10_value * 30
-    ws['D35'] = total_cash_flow
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
-    wb.save(tmp_file.name)
-    return tmp_file.name
-
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
-uploaded_model = st.file_uploader("Upload Financial Model (XLSX)", type=["xlsx", "xls"])
-currency = None
-total_area = 0.0
-monthly_rent = 0.0
-total_cash_flow = 0.0
 
-if uploaded_model:
-    parsed = extract_from_excel(uploaded_model)
-    if parsed:
-        currency, total_area_parsed, monthly_rent, total_cash_flow = parsed
-        total_area = total_area if total_area else total_area_parsed
-        st.success("Values auto-extracted from model.")
-    else:
-        currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
-else:
-    currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
-
+currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
 centre_num = st.text_input("Centre #")
 centre_address = st.text_input("Centre Address")
 area_units = st.selectbox("Area Units", ["SqM", "SqFt"])
 rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "Broker Provided or Market Report", "Benchmarked from similar centre"])
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
-
-# --- Total Area Input ---
-total_area_input = st.number_input(
-    "Total Area Contracted", 
-    value=float(total_area) if total_area else 0.0, 
-    min_value=0.0
-)
-
-monthly_rent_override = st.number_input(
-    "Override Monthly Market Rent", 
-    value=float(monthly_rent) if monthly_rent else 0.0, 
-    min_value=0.0
-)
-
-market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
+total_area_input = st.number_input("Total Area Contracted", value=0.0, min_value=0.0)
+monthly_rent_override = st.number_input("Override Monthly Market Rent", value=0.0, min_value=0.0)
+market_price = monthly_rent_override
 
 if centre_address:
     user_coords = get_coords(centre_address)
     if not user_coords:
-        # Allow manual entry
         lat = st.number_input("Latitude", value=0.0)
         lon = st.number_input("Longitude", value=0.0)
         user_coords = (lat, lon) if lat != 0.0 and lon != 0.0 else None
@@ -301,6 +201,7 @@ if centre_address:
     else:
         st.warning("No valid coordinates provided. Cannot display comps or coworking info.")
 
+# --- Generate Template Button ---
 if st.button("Generate Pricing Template"):
     if not centre_num or not centre_address:
         st.error("Please enter Centre # and Centre Address")
@@ -325,7 +226,7 @@ if st.button("Generate Pricing Template"):
             coworking_names if centre_address else ["", ""],
             coworking_distances if centre_address else ["", ""],
             market_price,
-            total_cash_flow
+            0  # total_cash_flow default
         )
         if file_path:
             with open(file_path, "rb") as f:
