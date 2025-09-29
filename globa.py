@@ -193,43 +193,6 @@ def extract_from_excel(uploaded_file):
         st.warning(f"Could not parse Excel model: {e}")
         return None
 
-# --- Extract PDF Data ---
-def extract_from_pdf(uploaded_file):
-    try:
-        import pdfplumber
-        text = ""
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
-        total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
-        total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
-        market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
-        market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
-        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
-        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0.0
-        monthly_cashflow = cashflow / 12 if cashflow else 0.0
-        return currency, total_area, market_rent, monthly_cashflow
-    except Exception as e:
-        st.warning(f"Could not parse PDF model: {e}")
-        return None
-
-def extract_gross_area_from_pdf(uploaded_file):
-    try:
-        import pdfplumber
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if text:
-                    match = re.search(r'Gross\s+Area\s+sq\s?ft\s*[:\s]\s*([\d,]+)', text, re.IGNORECASE)
-                    if match:
-                        return float(match.group(1).replace(',', ''))
-    except Exception as e:
-        st.warning(f"Error reading PDF for Gross Area: {e}")
-    return None
-
 # --- Fill Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, monthly_rent, rent_source,
@@ -275,20 +238,14 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
-uploaded_model = st.file_uploader("Upload Financial Model (PDF/XLSX)", type=["xlsx", "xls", "pdf"])
+uploaded_model = st.file_uploader("Upload Financial Model (XLSX)", type=["xlsx", "xls"])
 currency = None
 total_area = 0.0
 monthly_rent = 0.0
 total_cash_flow = 0.0
 
 if uploaded_model:
-    if uploaded_model.name.endswith(".pdf"):
-        parsed = extract_from_pdf(uploaded_model)
-        pdf_gross_area = extract_gross_area_from_pdf(uploaded_model)
-        if pdf_gross_area:
-            total_area = pdf_gross_area
-    else:
-        parsed = extract_from_excel(uploaded_model)
+    parsed = extract_from_excel(uploaded_model)
     if parsed:
         currency, total_area_parsed, monthly_rent, total_cash_flow = parsed
         total_area = total_area if total_area else total_area_parsed
