@@ -13,6 +13,18 @@ import os
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
+# --- CSS to hide Streamlit menu, footer, header, and top-right icons ---
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    header {visibility: hidden !important;}
+    [data-testid="stToolbar"] {visibility: hidden !important;}
+    </style>
+"""
+
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # --- Login UI ---
 if not st.session_state["logged_in"]:
     # Show logo at the top
@@ -26,20 +38,10 @@ if not st.session_state["logged_in"]:
         if email.lower().endswith("@iwgplc.com"):
             st.session_state["logged_in"] = True
             st.success("Login successful! Welcome.")
-            # No need for experimental_rerun, session state change will re-render
         else:
             st.error("Email must end with @iwgplc.com")
 
 else:
-    # --- Hide Streamlit Branding and Toolbar ---
-    hide_streamlit_style = """
-        <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        header {visibility: hidden;}
-        </style>
-    """
-    st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
     # --- Load global pricing data ---
     usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
