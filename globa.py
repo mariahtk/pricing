@@ -25,10 +25,8 @@ if not st.session_state["logged_in"]:
     if st.button("Login"):
         if email.lower().endswith("@iwgplc.com"):
             st.session_state["logged_in"] = True
-            # Instead of experimental_rerun crashing sometimes, we can safely refresh content by using placeholder
-            st.success("Login successful! Reloading...")
-            st.experimental_set_query_params(logged_in="true")  # lightweight rerun trigger
-            st.experimental_rerun()
+            st.success("Login successful! Welcome.")
+            # No need for experimental_rerun, session state change will re-render
         else:
             st.error("Email must end with @iwgplc.com")
 
@@ -41,6 +39,7 @@ else:
         header {visibility: hidden;}
         </style>
     """
+    st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
     # --- Load global pricing data ---
     usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
