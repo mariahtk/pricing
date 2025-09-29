@@ -15,15 +15,23 @@ if "logged_in" not in st.session_state:
 
 # --- Login UI ---
 if not st.session_state["logged_in"]:
+    # Show logo at the top
+    if os.path.exists("IWG Logo (1).jpg"):
+        st.image("IWG Logo (1).jpg", width=250)
+
     st.title("Global Pricing Tool - Login")
     email = st.text_input("Enter your IWG email")
-    
+
     if st.button("Login"):
         if email.lower().endswith("@iwgplc.com"):
             st.session_state["logged_in"] = True
-            st.experimental_rerun()  # safe rerun now that login check is minimal
+            # Instead of experimental_rerun crashing sometimes, we can safely refresh content by using placeholder
+            st.success("Login successful! Reloading...")
+            st.experimental_set_query_params(logged_in="true")  # lightweight rerun trigger
+            st.experimental_rerun()
         else:
             st.error("Email must end with @iwgplc.com")
+
 else:
     # --- Hide Streamlit Branding and Toolbar ---
     hide_streamlit_style = """
@@ -33,7 +41,6 @@ else:
         header {visibility: hidden;}
         </style>
     """
-    st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
     # --- Load global pricing data ---
     usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
