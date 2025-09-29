@@ -164,6 +164,70 @@ def find_online_coworking_osm(user_coords):
         
     return coworking_spaces[:2]
 
+def safe_to_float(val):
+    try:
+        return float(val.replace(",", "")) if val and val != "." else 0.0
+    except:
+        return 0.0
+
+# --- Extract Excel Data ---
+def extract_from_excel(uploaded_file):
+    try:
+        wb = load_workbook(uploaded_file, data_only=True)
+        ws = wb["10Yr Model"] if "10Yr Model" in wb.sheetnames else wb.active
+        text = " ".join([str(cell.value) for row in ws.iter_rows() for cell in row if cell.value])
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+        gross_area = market_rent = cashflow = None
+        for row in ws.iter_rows(values_only=True):
+            row_text = [str(x).strip().lower() if x else "" for x in row]
+            if "gross area (sqft)" in " ".join(row_text):
+                gross_area = next((x for x in row if isinstance(x, (int, float))), 0)
+            if "market rent value" in " ".join(row_text):
+                market_rent = next((x for x in row if isinstance(x, (int, float))), 0)
+            if "net partner cashflow" in " ".join(row_text) and "year 1" in " ".join(row_text):
+                cashflow = next((x for x in row if isinstance(x, (int, float))), 0)
+        total_area = gross_area or 0
+        monthly_cashflow = cashflow / 12 if cashflow else 0
+        return currency, total_area, market_rent or 0, monthly_cashflow or 0
+    except Exception as e:
+        st.warning(f"Could not parse Excel model: {e}")
+        return None
+
+# --- Extract PDF Data ---
+def extract_from_pdf(uploaded_file):
+    try:
+        text = ""
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        currency = "USD" if "USD" in text else "CAD" if "CAD" in text else "USD"
+        total_area_match = re.search(r"Total Area Contracted.*?([\d,\.]+)", text, re.IGNORECASE)
+        total_area = safe_to_float(total_area_match.group(1)) if total_area_match else 0.0
+        market_rent_match = re.search(r"Market Rent Value.*?([\d,\.]+)", text, re.IGNORECASE)
+        market_rent = safe_to_float(market_rent_match.group(1)) if market_rent_match else 0.0
+        cashflow_match = re.search(r"Net Partner Cashflow.*?Year 1.*?([\d,\.]+)", text, re.IGNORECASE)
+        cashflow = safe_to_float(cashflow_match.group(1)) if cashflow_match else 0.0
+        monthly_cashflow = cashflow / 12 if cashflow else 0.0
+        return currency, total_area, market_rent, monthly_cashflow
+    except Exception as e:
+        st.warning(f"Could not parse PDF model: {e}")
+        return None
+
+def extract_gross_area_from_pdf(uploaded_file):
+    try:
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    match = re.search(r'Gross\s+Area\s+sq\s?ft\s*[:\s]\s*([\d,]+)', text, re.IGNORECASE)
+                    if match:
+                        return float(match.group(1).replace(',', ''))
+    except Exception as e:
+        st.warning(f"Error reading PDF for Gross Area: {e}")
+    return None
+
 # --- Fill Template ---
 def fill_pricing_template(template_path, centre_num, centre_address, currency,
                           area_units, total_area, monthly_rent, rent_source,
@@ -209,7 +273,27 @@ def fill_pricing_template(template_path, centre_num, centre_address, currency,
 
 # --- Streamlit UI ---
 st.title("Pricing Template 2025 Filler")
-currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
+currency = None
+total_area = 0.0
+monthly_rent = 0.0
+total_cash_flow = 0.0
+
+if uploaded_model:
+    if uploaded_model.name.endswith(".pdf"):
+        parsed = extract_from_pdf(uploaded_model)
+        pdf_gross_area = extract_gross_area_from_pdf(uploaded_model)
+        if pdf_gross_area:
+            total_area = pdf_gross_area
+    else:
+        parsed = extract_from_excel(uploaded_model)
+    if parsed:
+        currency, total_area_parsed, monthly_rent, total_cash_flow = parsed
+        total_area = total_area if total_area else total_area_parsed
+        st.success("Values auto-extracted from model.")
+    else:
+        currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
+else:
+    currency = st.selectbox("Pricing Currency", ["USD", "CAD"])
 
 centre_num = st.text_input("Centre #")
 centre_address = st.text_input("Centre Address")
@@ -218,19 +302,20 @@ rent_source = st.selectbox("Source of Market Rent", ["LL or Partner Provided", "
 service_charges = st.number_input("Service Charges", min_value=0.0, format="%.2f")
 property_tax = st.number_input("Property Tax", min_value=0.0, format="%.2f")
 
+# --- Total Area Input ---
 total_area_input = st.number_input(
     "Total Area Contracted", 
-    value=0.0, 
+    value=float(total_area) if total_area else 0.0, 
     min_value=0.0
 )
 
 monthly_rent_override = st.number_input(
     "Override Monthly Market Rent", 
-    value=0.0, 
+    value=float(monthly_rent) if monthly_rent else 0.0, 
     min_value=0.0
 )
 
-market_price = monthly_rent_override
+market_price = monthly_rent_override if monthly_rent_override > 0 else monthly_rent
 
 if centre_address:
     user_coords = get_coords(centre_address)
@@ -280,7 +365,7 @@ if st.button("Generate Pricing Template"):
             coworking_names if centre_address else ["", ""],
             coworking_distances if centre_address else ["", ""],
             market_price,
-            0.0
+            total_cash_flow
         )
         if file_path:
             with open(file_path, "rb") as f:
