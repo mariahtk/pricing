@@ -30,7 +30,10 @@ if not user_email:
 # --- Logo ---
 st.image("IWG Logo (1).jpg", width=200)
 
- # --- Load global pricing data ---
+# --- Only run app if authenticated ---
+if authenticated:
+
+    # --- Load global pricing data ---
     usa_data = pd.read_excel("Global Pricing.xlsx", sheet_name="USA")
     canada_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Canada")
     market_rent_data = pd.read_excel("Global Pricing.xlsx", sheet_name="Market Rent")
